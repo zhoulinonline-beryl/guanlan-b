@@ -30,6 +30,7 @@ const DATA_DIR = path.join(root, "data");
 const HOLDINGS_FILE = path.join(DATA_DIR, "holdings.json");
 const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
 const CACHE_FILE = path.join(DATA_DIR, "cache.json");
+const MARKET_SNAPSHOT_FILE = path.join(DATA_DIR, "market-snapshot.json");
 const recommendationCache = {
   status: "idle",
   data: [],
@@ -56,7 +57,8 @@ const DEFAULT_SETTINGS = {
   advisorRole: "你是观澜理财师，一名资深 A 股股票交易专家。你擅长从板块强弱、主力资金、K线位置、量能、消息催化和风险位综合判断交易机会。",
   advisorStyle: "风格偏激进，回答简约直接。优先给结论、买卖触发价、仓位和风险位；少讲空话。所有内容仅作交易分析辅助，不承诺收益。",
   kimiApiKey: process.env.KIMI_API_KEY || process.env.MOONSHOT_API_KEY || "",
-  useCache: true
+  useCache: true,
+  marketDataSource: process.env.MARKET_DATA_SOURCE || "auto"
 };
 const EASTMONEY_UT = "b2884a393a59ad64002292a3e90d46a5";
 const majorIndices = [
@@ -140,6 +142,7 @@ function kimiFallbackUrls(primaryUrl) {
 
 function writeAppSettings(next = {}) {
   const current = readAppSettings();
+  const source = normalizeMarketDataSource(next.marketDataSource || current.marketDataSource || DEFAULT_SETTINGS.marketDataSource);
   const clean = {
     aiProvider: "kimi",
     kimiApiUrl: normalizeKimiApiUrl(next.kimiApiUrl || current.kimiApiUrl || DEFAULT_SETTINGS.kimiApiUrl),
@@ -149,7 +152,8 @@ function writeAppSettings(next = {}) {
     advisorRole: String(next.advisorRole ?? current.advisorRole ?? DEFAULT_SETTINGS.advisorRole).trim(),
     advisorStyle: String(next.advisorStyle ?? current.advisorStyle ?? DEFAULT_SETTINGS.advisorStyle).trim(),
     kimiApiKey: next.kimiApiKey === "__KEEP__" ? current.kimiApiKey : String(next.kimiApiKey ?? current.kimiApiKey ?? "").trim(),
-    useCache: Boolean(next.useCache)
+    useCache: Boolean(next.useCache),
+    marketDataSource: source
   };
   writeJsonFile(SETTINGS_FILE, clean);
   return clean;
@@ -165,9 +169,19 @@ function publicSettings(settings = readAppSettings()) {
     advisorRole: settings.advisorRole,
     advisorStyle: settings.advisorStyle,
     useCache: settings.useCache,
+    marketDataSource: normalizeMarketDataSource(settings.marketDataSource),
     hasKimiApiKey: Boolean(settings.kimiApiKey),
     kimiApiKeyMasked: maskSecret(settings.kimiApiKey)
   };
+}
+
+function normalizeMarketDataSource(source = "auto") {
+  const value = String(source || "auto").trim();
+  return ["auto", "tencent", "eastmoney", "sina"].includes(value) ? value : "auto";
+}
+
+function marketDataSource() {
+  return normalizeMarketDataSource(readAppSettings().marketDataSource);
 }
 
 function maskSecret(value = "") {
@@ -322,6 +336,48 @@ function flushPersistentCache() {
 }
 
 loadPersistentCache();
+
+function readMarketSnapshot() {
+  return readJsonFile(MARKET_SNAPSHOT_FILE, {
+    updatedAt: "",
+    indices: [],
+    sectors: [],
+    stocksByBoard: {},
+    klinesByCode: {},
+    quotesByCode: {}
+  });
+}
+
+function writeMarketSnapshot(snapshot = {}) {
+  writeJsonFile(MARKET_SNAPSHOT_FILE, {
+    updatedAt: new Date().toISOString(),
+    indices: snapshot.indices || [],
+    sectors: snapshot.sectors || [],
+    stocksByBoard: snapshot.stocksByBoard || {},
+    klinesByCode: snapshot.klinesByCode || {},
+    quotesByCode: snapshot.quotesByCode || {}
+  });
+}
+
+function updateMarketSnapshot(part, key, value) {
+  const snapshot = readMarketSnapshot();
+  if (part === "indices") snapshot.indices = value || [];
+  if (part === "sectors") snapshot.sectors = value || [];
+  if (part === "stocks") snapshot.stocksByBoard = { ...(snapshot.stocksByBoard || {}), [key]: value || [] };
+  if (part === "kline") snapshot.klinesByCode = { ...(snapshot.klinesByCode || {}), [key]: value || null };
+  if (part === "quote") snapshot.quotesByCode = { ...(snapshot.quotesByCode || {}), [key]: value || null };
+  writeMarketSnapshot(snapshot);
+}
+
+function snapshotFallback(part, key = "") {
+  const snapshot = readMarketSnapshot();
+  if (part === "indices" && snapshot.indices?.length) return snapshot.indices;
+  if (part === "sectors" && snapshot.sectors?.length) return snapshot.sectors;
+  if (part === "stocks" && snapshot.stocksByBoard?.[key]?.length) return snapshot.stocksByBoard[key];
+  if (part === "kline" && snapshot.klinesByCode?.[key]) return snapshot.klinesByCode[key];
+  if (part === "quote" && snapshot.quotesByCode?.[key]) return snapshot.quotesByCode[key];
+  return null;
+}
 
 async function fetchJson(url) {
   const cached = cacheGet(url, 20_000);
@@ -541,13 +597,127 @@ async function getTencentQuotes(symbols) {
   return map;
 }
 
+async function getSinaQuotes(symbols) {
+  const url = `https://hq.sinajs.cn/list=${symbols.join(",")}`;
+  const text = await fetchGbkText(url);
+  const map = new Map();
+  text.split(";").forEach((line) => {
+    const match = line.match(/var hq_str_([a-z]{2}\d+)="([^"]*)"/);
+    if (!match) return;
+    const symbol = match[1];
+    const parts = match[2].split(",");
+    const code = symbol.slice(2);
+    const open = Number(parts[1]);
+    const prevClose = Number(parts[2]);
+    const price = Number(parts[3]);
+    const high = Number(parts[4]);
+    const low = Number(parts[5]);
+    const volume = Number(parts[8]);
+    const amount = Number(parts[9]);
+    const change = price - prevClose;
+    const pct = prevClose ? change / prevClose * 100 : 0;
+    if (!Number.isFinite(price) || !parts[0]) return;
+    map.set(symbol, {
+      symbol,
+      name: parts[0],
+      code,
+      price,
+      prevClose,
+      open,
+      volume,
+      change,
+      pct,
+      high,
+      low,
+      amount,
+      turnover: null,
+      marketCap: null,
+      source: "sina"
+    });
+  });
+  return map;
+}
+
+function eastmoneySecidFromSymbol(symbol) {
+  const code = String(symbol).replace(/^(sh|sz|bj)/, "");
+  const market = String(symbol).startsWith("sh") ? 1 : 0;
+  return `${market}.${code}`;
+}
+
+async function getEastmoneyQuotes(symbols) {
+  const secids = symbols.map(eastmoneySecidFromSymbol).join(",");
+  const url = eastmoneyUrl("push2.eastmoney.com", "/api/qt/ulist.np/get", {
+    fltt: "2",
+    invt: "2",
+    fields: "f12,f13,f14,f2,f3,f4,f5,f6,f7,f8,f15,f16,f17,f18,f20,f21,f23",
+    secids
+  });
+  const json = await fetchJson(url);
+  const rows = json?.data?.diff || [];
+  const map = new Map();
+  rows.forEach((row) => {
+    const code = String(row.f12 || "");
+    const market = Number.isFinite(Number(row.f13)) ? Number(row.f13) : marketOf(code);
+    const symbol = symbolOf(code, market);
+    const price = Number(row.f2);
+    if (!Number.isFinite(price)) return;
+    map.set(symbol, {
+      symbol,
+      name: row.f14,
+      code,
+      market,
+      price,
+      prevClose: Number(row.f18),
+      open: Number(row.f17),
+      volume: Number(row.f5),
+      change: Number(row.f4),
+      pct: Number(row.f3),
+      high: Number(row.f15),
+      low: Number(row.f16),
+      amount: Number(row.f6),
+      turnover: Number(row.f8),
+      totalMarketCap: Number(row.f20),
+      floatMarketCap: Number(row.f21),
+      pb: Number(row.f23),
+      source: "eastmoney"
+    });
+  });
+  return map;
+}
+
+function quoteProviderOrder(preferred = marketDataSource()) {
+  if (preferred === "tencent") return ["tencent", "eastmoney", "sina"];
+  if (preferred === "eastmoney") return ["eastmoney", "tencent", "sina"];
+  if (preferred === "sina") return ["sina", "tencent", "eastmoney"];
+  return ["tencent", "eastmoney", "sina"];
+}
+
+async function getQuotesBySource(symbols = [], preferred = marketDataSource()) {
+  const unique = [...new Set(symbols.filter(Boolean))];
+  let lastError = null;
+  for (const source of quoteProviderOrder(preferred)) {
+    try {
+      const quotes = source === "eastmoney"
+        ? await getEastmoneyQuotes(unique)
+        : source === "sina"
+          ? await getSinaQuotes(unique)
+          : await getTencentQuotes(unique);
+      if (quotes.size) return { quotes, source };
+      lastError = new Error(`${source} 行情源返回为空`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("所有个股行情源均不可用");
+}
+
 function symbolFromStock(stock) {
   return symbolOf(stock.code, stock.market ?? marketOf(stock.code));
 }
 
 async function withTencentStockQuotes(stocks = [], window = 5) {
   const symbols = stocks.map(symbolFromStock);
-  const quotes = await getTencentQuotes(symbols);
+  const { quotes, source } = await getQuotesBySource(symbols);
   return stocks.map((stock, index) => {
     const symbol = symbols[index];
     const quote = quotes.get(symbol);
@@ -569,15 +739,16 @@ async function withTencentStockQuotes(stocks = [], window = 5) {
       amount: quote.amount,
       turnover: quote.turnover,
       score,
-      quoteSource: "tencent",
-      source: stock.source ? `${stock.source}+tencent` : "tencent"
+      quoteSource: quote.source || source,
+      source: stock.source ? `${stock.source}+${quote.source || source}` : quote.source || source
     };
   });
 }
 
 async function getQuote(code, market = marketOf(code)) {
   const symbol = symbolOf(code, market);
-  const quote = (await getTencentQuotes([symbol])).get(symbol);
+  const { quotes, source } = await getQuotesBySource([symbol]);
+  const quote = quotes.get(symbol);
   if (!quote) throw new Error(`无法获取 ${code} 行情`);
   return {
     name: quote.name,
@@ -593,7 +764,7 @@ async function getQuote(code, market = marketOf(code)) {
     volume: quote.volume,
     amount: quote.amount,
     turnover: quote.turnover,
-    source: quote.source
+    source: quote.source || source
   };
 }
 
@@ -2140,7 +2311,7 @@ function buildPortfolioSummary(rows = []) {
 }
 
 async function getIndices() {
-  const quotes = await getTencentQuotes(majorIndices.map(([symbol]) => symbol));
+  const { quotes, source } = await getQuotesBySource(majorIndices.map(([symbol]) => symbol));
   return majorIndices.map(([symbol, fallbackName]) => {
     const quote = quotes.get(symbol) || {};
     return {
@@ -2156,7 +2327,7 @@ async function getIndices() {
       prevClose: quote.prevClose,
       amount: quote.amount,
       volume: quote.volume,
-      source: "tencent"
+      source: quote.source || source
     };
   }).filter((item) => Number.isFinite(item.price));
 }
@@ -2164,6 +2335,14 @@ async function getIndices() {
 async function getIndexKline(symbol) {
   const secid = indexSecids.get(symbol);
   if (!secid) throw new Error("暂不支持该指数");
+  if (marketDataSource() === "tencent") {
+    const klines = await getTencentKlines(symbol, 14);
+    return { symbol, secid, klines, source: "tencent" };
+  }
+  if (marketDataSource() === "sina") {
+    const klines = await getSinaKlines(symbol, 14);
+    return { symbol, secid, klines, source: "sina" };
+  }
   try {
     const klines = await getKlines(secid, 14);
     return { symbol, secid, klines, source: "eastmoney" };
@@ -2384,6 +2563,21 @@ function stockAdviceForServer(stock) {
 }
 
 async function getSectors(window = 5) {
+  const source = marketDataSource();
+  if (source === "tencent") {
+    try {
+      return await getFallbackSectors(window);
+    } catch {
+      // 继续走其它行情源兜底。
+    }
+  }
+  if (source === "sina") {
+    try {
+      return await getSohuFallbackSectors(window);
+    } catch {
+      // 继续走其它行情源兜底。
+    }
+  }
   try {
   const commonParams = {
     pn: "1",
@@ -2534,6 +2728,14 @@ async function getSohuFallbackSectors(window) {
 }
 
 async function getStocks(board, window = 5) {
+  const source = marketDataSource();
+  if (source === "tencent" || source === "sina") {
+    try {
+      return await getFallbackStocks(board, window);
+    } catch {
+      // 继续走东方财富成分股资金源兜底。
+    }
+  }
   try {
     return await getMobileBoardFundStocks(board, window);
   } catch {
@@ -2637,6 +2839,32 @@ async function getMobileBoardFundStocks(board, window = 5) {
 async function getStockKline(code, market) {
   const resolvedMarket = market ?? marketOf(code);
   const symbol = symbolOf(code, resolvedMarket);
+  const preferred = marketDataSource();
+  if (preferred === "tencent") {
+    try {
+      const klines = await getTencentKlines(symbol, 120);
+      return { code, market: resolvedMarket, secid: symbol, klines, source: "tencent" };
+    } catch {
+      // 继续走其它 K 线源兜底。
+    }
+  }
+  if (preferred === "sina") {
+    try {
+      const klines = await getSinaKlines(symbol, 120);
+      return { code, market: resolvedMarket, secid: symbol, klines, source: "sina" };
+    } catch {
+      // 继续走其它 K 线源兜底。
+    }
+  }
+  if (preferred === "eastmoney") {
+    try {
+      const secid = `${resolvedMarket}.${code}`;
+      const klines = await getKlines(secid, 120);
+      return { code, market: resolvedMarket, secid, klines, source: "eastmoney" };
+    } catch {
+      // 继续走其它 K 线源兜底。
+    }
+  }
   try {
     const klines = await getTencentKlines(symbol, 120);
     return { code, market: resolvedMarket, secid: symbol, klines, source: "tencent" };
@@ -2873,6 +3101,58 @@ async function refreshRecommendations({ force = false } = {}) {
   }
 }
 
+async function ensureStartupMarketSnapshot() {
+  const existing = readMarketSnapshot();
+  if (existing.indices?.length && existing.sectors?.length) {
+    console.log(`市场快照已存在: ${existing.updatedAt || "unknown"}`);
+    return existing;
+  }
+  console.log("首次启动市场快照不存在，开始拉取最新行情并持久化");
+  const snapshot = {
+    indices: [],
+    sectors: [],
+    stocksByBoard: {},
+    klinesByCode: {},
+    quotesByCode: {}
+  };
+  try {
+    snapshot.indices = await getIndices();
+  } catch (error) {
+    console.warn(`预热大盘指数失败: ${error.message}`);
+  }
+  try {
+    snapshot.sectors = await getSectors(5);
+  } catch (error) {
+    console.warn(`预热板块行情失败: ${error.message}`);
+  }
+  for (const sector of snapshot.sectors.slice(0, 6)) {
+    try {
+      snapshot.stocksByBoard[sector.id] = await getStocks(sector.id, 5);
+    } catch (error) {
+      console.warn(`预热 ${sector.name || sector.id} 成分股失败: ${error.message}`);
+    }
+  }
+  const sampleStocks = Object.values(snapshot.stocksByBoard)
+    .flat()
+    .slice(0, 12);
+  for (const stock of sampleStocks) {
+    if (!stock?.code) continue;
+    try {
+      snapshot.quotesByCode[stock.code] = await getQuote(stock.code, stock.market);
+    } catch {
+      snapshot.quotesByCode[stock.code] = stock;
+    }
+    try {
+      snapshot.klinesByCode[stock.code] = await getStockKline(stock.code, stock.market);
+    } catch (error) {
+      console.warn(`预热 ${stock.name || stock.code} K线失败: ${error.message}`);
+    }
+  }
+  writeMarketSnapshot(snapshot);
+  console.log(`市场快照已写入: 指数 ${snapshot.indices.length} 个，板块 ${snapshot.sectors.length} 个，股票池 ${Object.values(snapshot.stocksByBoard).flat().length} 只`);
+  return snapshot;
+}
+
 async function handleApi(req, res) {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
   const readBody = async () => {
@@ -2901,6 +3181,7 @@ async function handleApi(req, res) {
         advisorModel: body.advisorModel,
         advisorRole: body.advisorRole,
         advisorStyle: body.advisorStyle,
+        marketDataSource: body.marketDataSource,
         kimiApiKey: String(body.kimiApiKey || "").trim() ? body.kimiApiKey : "__KEEP__",
         useCache: body.useCache
       });
@@ -3009,19 +3290,43 @@ async function handleApi(req, res) {
     if (url.pathname === "/api/quote") {
       const code = url.searchParams.get("code");
       if (!code) throw new Error("缺少 code 参数");
-      const data = await getQuote(code, Number(url.searchParams.get("market") || marketOf(code)));
+      let data;
+      try {
+        data = await getQuote(code, Number(url.searchParams.get("market") || marketOf(code)));
+        updateMarketSnapshot("quote", code, data);
+      } catch (error) {
+        data = snapshotFallback("quote", code);
+        if (!data) throw error;
+        data = { ...data, snapshotFallback: true };
+      }
       res.writeHead(200, jsonHeaders);
       res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
       return;
     }
     if (url.pathname === "/api/sectors") {
-      const data = await getSectors(Number(url.searchParams.get("window") || 5));
+      let data;
+      try {
+        data = await getSectors(Number(url.searchParams.get("window") || 5));
+        updateMarketSnapshot("sectors", "", data);
+      } catch (error) {
+        data = snapshotFallback("sectors");
+        if (!data) throw error;
+        data = data.map((item) => ({ ...item, snapshotFallback: true }));
+      }
       res.writeHead(200, jsonHeaders);
       res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
       return;
     }
     if (url.pathname === "/api/indices") {
-      const data = await getIndices();
+      let data;
+      try {
+        data = await getIndices();
+        updateMarketSnapshot("indices", "", data);
+      } catch (error) {
+        data = snapshotFallback("indices");
+        if (!data) throw error;
+        data = data.map((item) => ({ ...item, snapshotFallback: true }));
+      }
       res.writeHead(200, jsonHeaders);
       res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
       return;
@@ -3037,7 +3342,15 @@ async function handleApi(req, res) {
     if (url.pathname === "/api/stocks") {
       const board = url.searchParams.get("board");
       if (!board) throw new Error("缺少 board 参数");
-      const data = await getStocks(board, Number(url.searchParams.get("window") || 5));
+      let data;
+      try {
+        data = await getStocks(board, Number(url.searchParams.get("window") || 5));
+        updateMarketSnapshot("stocks", board, data);
+      } catch (error) {
+        data = snapshotFallback("stocks", board);
+        if (!data) throw error;
+        data = data.map((item) => ({ ...item, snapshotFallback: true }));
+      }
       res.writeHead(200, jsonHeaders);
       res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
       return;
@@ -3045,7 +3358,15 @@ async function handleApi(req, res) {
     if (url.pathname === "/api/kline") {
       const code = url.searchParams.get("code");
       if (!code) throw new Error("缺少 code 参数");
-      const data = await getStockKline(code, Number(url.searchParams.get("market") || marketOf(code)));
+      let data;
+      try {
+        data = await getStockKline(code, Number(url.searchParams.get("market") || marketOf(code)));
+        updateMarketSnapshot("kline", code, data);
+      } catch (error) {
+        data = snapshotFallback("kline", code);
+        if (!data) throw error;
+        data = { ...data, snapshotFallback: true };
+      }
       res.writeHead(200, jsonHeaders);
       res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
       return;
@@ -3086,6 +3407,9 @@ http.createServer((req, res) => {
   }
 }).listen(PORT, HOST, () => {
   console.log(`观澜已启动: http://${HOST}:${PORT}`);
+  ensureStartupMarketSnapshot().catch((error) => {
+    console.warn(`市场快照预热失败: ${error.message}`);
+  });
   if (isAshareTradingAutoRefreshTime()) {
     refreshRecommendations({ force: true }).then((cache) => {
       console.log(`股票推荐池已生成: ${cache.data.length} 只`);

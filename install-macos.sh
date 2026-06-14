@@ -18,6 +18,7 @@ KIMI_API_URL_DEFAULT="${KIMI_API_URL_DEFAULT:-https://api.moonshot.ai/v1/chat/co
 KIMI_MODEL_DEFAULT="${KIMI_MODEL_DEFAULT:-moonshot-v1-auto}"
 KIMI_VISION_MODEL_DEFAULT="${KIMI_VISION_MODEL_DEFAULT:-moonshot-v1-8k-vision-preview}"
 ADVISOR_MODEL_DEFAULT="${ADVISOR_MODEL_DEFAULT:-kimi-k2.5}"
+MARKET_DATA_SOURCE_DEFAULT="${MARKET_DATA_SOURCE_DEFAULT:-auto}"
 
 log() {
   printf '\033[1;34m[guanlan]\033[0m %s\n' "$*"
@@ -122,7 +123,7 @@ sync_app_files() {
 }
 
 write_env_and_settings() {
-  local api_key api_url kimi_model vision_model advisor_model use_cache_bool use_cache_text
+  local api_key api_url kimi_model vision_model advisor_model market_source use_cache_bool use_cache_text
   api_key="${KIMI_API_KEY:-}"
   if [[ -z "$api_key" ]]; then
     api_key="$(ask_secret "请输入 Kimi AK（可留空，留空后个股讨论/新闻/OCR 能力会受限）")"
@@ -131,6 +132,14 @@ write_env_and_settings() {
   kimi_model="$(ask "文本/联网分析模型" "${KIMI_MODEL:-$KIMI_MODEL_DEFAULT}")"
   vision_model="$(ask "图片 OCR 模型" "${KIMI_VISION_MODEL:-$KIMI_VISION_MODEL_DEFAULT}")"
   advisor_model="$(ask "观澜理财师模型" "${ADVISOR_MODEL:-$ADVISOR_MODEL_DEFAULT}")"
+  market_source="$(ask "行情数据源 auto/tencent/eastmoney/sina" "${MARKET_DATA_SOURCE:-$MARKET_DATA_SOURCE_DEFAULT}")"
+  case "$market_source" in
+    auto|tencent|eastmoney|sina) ;;
+    *)
+      warn "未知行情源 ${market_source}，已改为 auto"
+      market_source="auto"
+      ;;
+  esac
 
   if ask_yes_no "是否启用缓存策略（缓存历史行情、新闻政策和模型结果，降低等待和调用成本）" "Y"; then
     use_cache_bool="true"
@@ -171,7 +180,8 @@ EOF
   "advisorRole": "你是观澜理财师，一名资深 A 股股票交易专家。你擅长从板块强弱、主力资金、K线位置、量能、消息催化和风险位综合判断交易机会。",
   "advisorStyle": "风格偏激进，回答简约直接。优先给结论、买卖触发价、仓位和风险位；少讲空话。所有内容仅作交易分析辅助，不承诺收益。",
   "kimiApiKey": "${api_key}",
-  "useCache": ${use_cache_bool}
+  "useCache": ${use_cache_bool},
+  "marketDataSource": "${market_source}"
 }
 EOF
   chmod 600 "${APP_DIR}/data/settings.json"

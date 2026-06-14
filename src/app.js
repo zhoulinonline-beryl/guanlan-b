@@ -798,6 +798,7 @@ async function saveSettings() {
         advisorModel: draft.advisorModel,
         advisorRole: draft.advisorRole,
         advisorStyle: draft.advisorStyle,
+        marketDataSource: draft.marketDataSource,
         kimiApiKey: draft.kimiApiKey || "",
         useCache: draft.useCache
       })
@@ -1834,83 +1835,94 @@ function settingsPage() {
   const modelOptions = ["moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"];
   const advisorOptions = ["kimi-k2.5", "moonshot-v1-auto", "moonshot-v1-32k", "moonshot-v1-128k"];
   const visionOptions = ["moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview"];
+  const marketSourceOptions = [
+    ["auto", "自动兜底（推荐）", "腾讯、东方财富、新浪/搜狐按接口类型自动选择，失败后继续尝试其它源。"],
+    ["tencent", "优先腾讯行情", "个股报价和 K 线优先使用腾讯，失败后自动兜底。"],
+    ["eastmoney", "优先东方财富", "板块资金、成分股、K 线优先使用东方财富，失败后自动兜底。"],
+    ["sina", "优先新浪/搜狐", "报价和 K 线优先新浪，板块优先搜狐，失败后自动兜底。"]
+  ];
   if (state.settingsLoading && !state.settings) return loadingView();
   return `
     <section class="settings-layout">
       <div class="panel settings-panel">
+        <div class="settings-summary">
+          <span>AK ${draft.hasKimiApiKey ? "已配置" : "未配置"}</span>
+          <span>行情源 ${marketSourceOptions.find(([key]) => key === (draft.marketDataSource || "auto"))?.[1] || "自动兜底"}</span>
+          <span>缓存 ${draft.useCache !== false ? "开启" : "关闭"}</span>
+        </div>
         <section class="settings-section">
-          <div class="section-head first-section">
-            <div>
-              <h2>调用模型</h2>
-              <span class="hint">当前支持 Kimi/Moonshot，设置会持久化保存到本地。</span>
-            </div>
+          <div class="settings-section-title">
+            <h2>调用模型</h2>
+            <span>设置 Kimi/Moonshot 模型与 API。</span>
           </div>
-          <label class="setting-card">
-            <span><strong>文本/联网分析模型</strong><small>用于新闻政策分析、持股建议和股票推荐解释。</small></span>
+          <label class="setting-row">
+            <span><strong>文本模型</strong><small>新闻、推荐、持股分析</small></span>
             <select data-setting="kimiModel">
               ${modelOptions.map((item) => `<option value="${item}" ${draft.kimiModel === item ? "selected" : ""}>${item}</option>`).join("")}
             </select>
           </label>
-          <label class="setting-card">
-            <span><strong>图片 OCR 模型</strong><small>用于识别持股截图里的股票名称、成本价和持有数量。</small></span>
+          <label class="setting-row">
+            <span><strong>OCR 模型</strong><small>识别持股截图</small></span>
             <select data-setting="kimiVisionModel">
               ${visionOptions.map((item) => `<option value="${item}" ${draft.kimiVisionModel === item ? "selected" : ""}>${item}</option>`).join("")}
             </select>
           </label>
-          <label class="setting-card">
-            <span><strong>API 地址</strong><small>默认使用 Moonshot 官方 Chat Completions 地址。</small></span>
+          <label class="setting-row">
+            <span><strong>API 地址</strong><small>Chat Completions</small></span>
             <input data-setting="kimiApiUrl" value="${escapeHtml(draft.kimiApiUrl || "")}" placeholder="https://api.moonshot.cn/v1/chat/completions" />
           </label>
-          <label class="setting-card">
-            <span><strong>Kimi AK</strong><small>留空保存时保留原 AK；输入新 AK 后会覆盖本地设置。</small></span>
+          <label class="setting-row">
+            <span><strong>Kimi AK</strong><small>留空则保留原 AK</small></span>
             <input type="password" data-setting="kimiApiKey" value="${escapeHtml(draft.kimiApiKey || "")}" placeholder="${draft.hasKimiApiKey ? `已保存 ${draft.kimiApiKeyMasked}` : "请输入 Moonshot/Kimi API Key"}" autocomplete="off" />
           </label>
         </section>
         <section class="settings-section">
-          <div class="section-head first-section">
-            <div>
-              <h2>观澜理财师</h2>
-              <span class="hint">配置个股讨论页的智能体角色、模型和回复风格。</span>
-            </div>
+          <div class="settings-section-title">
+            <h2>行情数据源</h2>
+            <span>手动选择优先源，失败后仍自动兜底。</span>
           </div>
-          <label class="setting-card">
-            <span><strong>理财师模型</strong><small>默认使用 Kimi 2.5，用于个股/板块对话。</small></span>
+          <label class="setting-row">
+            <span><strong>优先数据源</strong><small>${marketSourceOptions.find(([key]) => key === (draft.marketDataSource || "auto"))?.[2] || marketSourceOptions[0][2]}</small></span>
+            <select data-setting="marketDataSource">
+              ${marketSourceOptions.map(([key, label]) => `<option value="${key}" ${(draft.marketDataSource || "auto") === key ? "selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </label>
+        </section>
+        <section class="settings-section">
+          <div class="settings-section-title">
+            <h2>观澜理财师</h2>
+            <span>控制个股讨论的角色、模型和回答风格。</span>
+          </div>
+          <label class="setting-row">
+            <span><strong>理财师模型</strong><small>个股/板块对话</small></span>
             <select data-setting="advisorModel">
               ${advisorOptions.map((item) => `<option value="${item}" ${draft.advisorModel === item ? "selected" : ""}>${item}</option>`).join("")}
             </select>
           </label>
-          <label class="setting-card">
-            <span><strong>角色定义</strong><small>定义这个智能体怎么看市场、用什么身份回答。</small></span>
+          <label class="setting-row setting-row-wide">
+            <span><strong>角色定义</strong><small>智能体身份</small></span>
             <textarea data-setting="advisorRole" rows="5">${escapeHtml(draft.advisorRole || "")}</textarea>
           </label>
-          <label class="setting-card">
-            <span><strong>对话风格</strong><small>控制回复的激进程度、篇幅和表达方式。</small></span>
+          <label class="setting-row setting-row-wide">
+            <span><strong>对话风格</strong><small>激进程度与篇幅</small></span>
             <textarea data-setting="advisorStyle" rows="4">${escapeHtml(draft.advisorStyle || "")}</textarea>
           </label>
         </section>
         <section class="settings-section">
-          <div class="section-head first-section">
-            <div>
-              <h2>缓存策略</h2>
-              <span class="hint">开启后会优先复用已获取过的历史行情、新闻和政策数据。</span>
-            </div>
+          <div class="settings-section-title">
+            <h2>缓存策略</h2>
+            <span>复用历史行情、新闻和模型结果。</span>
           </div>
-          <label class="setting-card toggle-row">
+          <label class="setting-row toggle-row">
             <span>
               <strong>使用缓存</strong>
-              <small>历史 K 线、新闻政策、Kimi 联网分析会写入本地缓存，下次查询优先读取。</small>
+              <small>降低等待和调用成本</small>
             </span>
             <input type="checkbox" data-setting="useCache" ${draft.useCache !== false ? "checked" : ""} />
           </label>
         </section>
         <div class="settings-actions">
-          <div class="settings-status">
-            <span>AK 状态：${draft.hasKimiApiKey ? "已配置" : "未配置"}</span>
-            <span>缓存：${draft.useCache !== false ? "开启" : "关闭"}</span>
-          </div>
-          <div class="controls">
-            <button class="primary" data-action="save-settings" ${state.settingsSaving ? "disabled" : ""}>${state.settingsSaving ? "应用中..." : "保存并应用"}</button>
-          </div>
+          <button class="primary" data-action="save-settings" ${state.settingsSaving ? "disabled" : ""}>${state.settingsSaving ? "应用中..." : "保存并应用"}</button>
         </div>
       </div>
     </section>
