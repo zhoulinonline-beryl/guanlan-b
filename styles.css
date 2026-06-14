@@ -2260,6 +2260,22 @@ button {
   line-height: 1.55;
 }
 
+.portfolio-t-tags {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.portfolio-t-tags span {
+  border: 1px solid rgba(88, 178, 255, 0.2);
+  border-radius: 7px;
+  background: rgba(88, 178, 255, 0.075);
+  color: #cfe9ff;
+  padding: 5px 7px;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
 .portfolio-t-orders {
   display: grid;
   gap: 7px;

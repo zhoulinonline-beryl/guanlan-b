@@ -8,23 +8,28 @@ set -Eeuo pipefail
 #   3. sudo bash deploy-aliyun-ecs.sh
 #
 # 可选环境变量：
-#   APP_NAME=a-stock-radar
-#   APP_DIR=/opt/a-stock-radar
+#   APP_NAME=guanlan-stock-radar
+#   APP_DIR=/opt/guanlan-stock-radar
 #   PORT=5173
 #   DOMAIN=radar.example.com
-#   KIMI_API_KEY=sk-xxx
-#   KIMI_MODEL=moonshot-v1-auto
+#   AI_PROVIDER=kimi|deepseek|minimax|glm
+#   AI_API_KEY=sk-xxx
 
-APP_NAME="${APP_NAME:-a-stock-radar}"
+APP_NAME="${APP_NAME:-guanlan-stock-radar}"
 APP_DIR="${APP_DIR:-/opt/${APP_NAME}}"
 PORT="${PORT:-5173}"
 DOMAIN="${DOMAIN:-_}"
-KIMI_MODEL="${KIMI_MODEL:-moonshot-v1-auto}"
 NODE_MIN_MAJOR="${NODE_MIN_MAJOR:-18}"
 SOURCE_DIR="$(pwd)"
 SERVICE_USER="${SERVICE_USER:-root}"
 NGINX_CONF="/etc/nginx/conf.d/${APP_NAME}.conf"
 SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
+AI_PROVIDER_DEFAULT="${AI_PROVIDER_DEFAULT:-kimi}"
+KIMI_API_URL_DEFAULT="${KIMI_API_URL_DEFAULT:-https://api.moonshot.ai/v1/chat/completions}"
+KIMI_MODEL_DEFAULT="${KIMI_MODEL_DEFAULT:-kimi-k2.6}"
+KIMI_VISION_MODEL_DEFAULT="${KIMI_VISION_MODEL_DEFAULT:-kimi-k2.6}"
+ADVISOR_MODEL_DEFAULT="${ADVISOR_MODEL_DEFAULT:-kimi-k2.6}"
+MARKET_DATA_SOURCE_DEFAULT="${MARKET_DATA_SOURCE_DEFAULT:-auto}"
 
 log() {
   printf '\033[1;34m[deploy]\033[0m %s\n' "$*"
@@ -33,6 +38,42 @@ log() {
 fail() {
   printf '\033[1;31m[deploy failed]\033[0m %s\n' "$*" >&2
   exit 1
+}
+
+warn() {
+  printf '\033[1;33m[deploy]\033[0m %s\n' "$*"
+}
+
+ask() {
+  local prompt="$1"
+  local default_value="${2:-}"
+  local answer
+  if [[ -n "$default_value" ]]; then
+    read -r -p "${prompt} [${default_value}]: " answer
+    printf '%s' "${answer:-$default_value}"
+  else
+    read -r -p "${prompt}: " answer
+    printf '%s' "$answer"
+  fi
+}
+
+ask_secret() {
+  local prompt="$1"
+  local answer
+  read -r -p "${prompt}: " answer
+  printf '%s' "$answer"
+}
+
+ask_yes_no() {
+  local prompt="$1"
+  local default_value="${2:-Y}"
+  local answer
+  read -r -p "${prompt} (${default_value}/$( [[ "$default_value" == "Y" ]] && echo "n" || echo "y" )): " answer
+  answer="${answer:-$default_value}"
+  case "$answer" in
+    y|Y|yes|YES|Yes) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 need_root() {
@@ -55,14 +96,14 @@ detect_pkg_manager() {
 
 install_base_packages() {
   local pm="$1"
-  log "安装基础依赖：curl、nginx、ca-certificates"
+  log "安装基础依赖：curl、rsync、nginx、ca-certificates"
   if [[ "$pm" == "apt" ]]; then
     apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates gnupg nginx
+    DEBIAN_FRONTEND=noninteractive apt-get install -y curl rsync ca-certificates gnupg nginx
   elif [[ "$pm" == "dnf" ]]; then
-    dnf install -y curl ca-certificates nginx
+    dnf install -y curl rsync ca-certificates nginx
   else
-    yum install -y curl ca-certificates nginx
+    yum install -y curl rsync ca-certificates nginx
   fi
 }
 
@@ -107,19 +148,141 @@ ensure_project_files() {
 }
 
 write_env_file() {
-  local key="${KIMI_API_KEY:-}"
-  if [[ -z "$key" ]]; then
-    read -r -p "请输入 KIMI_API_KEY（可留空，留空则新闻/图片解析相关能力不可用）： " key
+  local ai_provider provider_label api_key api_url ocr_api_url text_model vision_model advisor_model market_source use_cache_bool
+  local kimi_api_key kimi_api_url kimi_model kimi_vision_model
+
+  ai_provider="$(ask "模型供应商 kimi/deepseek/minimax/glm" "${AI_PROVIDER:-$AI_PROVIDER_DEFAULT}")"
+  case "$ai_provider" in
+    kimi)
+      provider_label="Kimi"
+      api_url="${AI_API_URL:-$KIMI_API_URL_DEFAULT}"
+      ocr_api_url="${AI_OCR_API_URL:-}"
+      text_model="${AI_TEXT_MODEL:-$KIMI_MODEL_DEFAULT}"
+      vision_model="${AI_VISION_MODEL:-$KIMI_VISION_MODEL_DEFAULT}"
+      advisor_model="${ADVISOR_MODEL:-$ADVISOR_MODEL_DEFAULT}"
+      ;;
+    deepseek)
+      provider_label="DeepSeek"
+      api_url="${AI_API_URL:-https://api.deepseek.com/chat/completions}"
+      ocr_api_url="${AI_OCR_API_URL:-}"
+      text_model="${AI_TEXT_MODEL:-deepseek-v4-flash}"
+      vision_model="${AI_VISION_MODEL:-deepseek-ocr}"
+      advisor_model="${ADVISOR_MODEL:-deepseek-v4-flash}"
+      ;;
+    minimax)
+      provider_label="MiniMax"
+      api_url="${AI_API_URL:-https://api.minimax.io/v1/chat/completions}"
+      ocr_api_url="${AI_OCR_API_URL:-}"
+      text_model="${AI_TEXT_MODEL:-MiniMax-M3}"
+      vision_model="${AI_VISION_MODEL:-MiniMax-VL-01}"
+      advisor_model="${ADVISOR_MODEL:-MiniMax-M3}"
+      ;;
+    glm)
+      provider_label="GLM"
+      api_url="${AI_API_URL:-https://open.bigmodel.cn/api/paas/v4/chat/completions}"
+      ocr_api_url="${AI_OCR_API_URL:-https://api.z.ai/api/paas/v4/layout_parsing}"
+      text_model="${AI_TEXT_MODEL:-glm-5.1}"
+      vision_model="${AI_VISION_MODEL:-glm-ocr}"
+      advisor_model="${ADVISOR_MODEL:-glm-5.1}"
+      ;;
+    *)
+      warn "未知模型供应商 ${ai_provider}，已改为 kimi"
+      ai_provider="kimi"
+      provider_label="Kimi"
+      api_url="${AI_API_URL:-$KIMI_API_URL_DEFAULT}"
+      ocr_api_url="${AI_OCR_API_URL:-}"
+      text_model="${AI_TEXT_MODEL:-$KIMI_MODEL_DEFAULT}"
+      vision_model="${AI_VISION_MODEL:-$KIMI_VISION_MODEL_DEFAULT}"
+      advisor_model="${ADVISOR_MODEL:-$ADVISOR_MODEL_DEFAULT}"
+      ;;
+  esac
+
+  api_key="${AI_API_KEY:-${KIMI_API_KEY:-}}"
+  if [[ -z "$api_key" ]]; then
+    api_key="$(ask_secret "请输入 ${provider_label} AK（输入内容会显示在终端；可留空，留空后个股讨论/新闻/OCR 能力会受限）")"
+  fi
+  api_url="$(ask "${provider_label} API 地址" "$api_url")"
+  if [[ "$ai_provider" == "glm" ]]; then
+    ocr_api_url="$(ask "GLM OCR API 地址" "$ocr_api_url")"
+  fi
+  text_model="$(ask "文本/分析模型" "$text_model")"
+  vision_model="$(ask "图片 OCR 模型（无视觉模型可留空）" "$vision_model")"
+  advisor_model="$(ask "观澜理财师模型" "$advisor_model")"
+  market_source="$(ask "行情数据源 auto/tencent/eastmoney/sina" "${MARKET_DATA_SOURCE:-$MARKET_DATA_SOURCE_DEFAULT}")"
+  case "$market_source" in
+    auto|tencent|eastmoney|sina) ;;
+    *)
+      warn "未知行情源 ${market_source}，已改为 auto"
+      market_source="auto"
+      ;;
+  esac
+
+  if ask_yes_no "是否启用缓存策略（缓存历史行情、新闻政策和模型结果，降低等待和调用成本）" "Y"; then
+    use_cache_bool="true"
+  else
+    use_cache_bool="false"
+  fi
+
+  if [[ "$ai_provider" == "kimi" ]]; then
+    kimi_api_key="$api_key"
+    kimi_api_url="$api_url"
+    kimi_model="$text_model"
+    kimi_vision_model="$vision_model"
+  else
+    kimi_api_key=""
+    kimi_api_url="$KIMI_API_URL_DEFAULT"
+    kimi_model="$KIMI_MODEL_DEFAULT"
+    kimi_vision_model="$KIMI_VISION_MODEL_DEFAULT"
   fi
 
   log "写入环境变量：${APP_DIR}/.env.local"
   cat > "${APP_DIR}/.env.local" <<EOF
 PORT=${PORT}
-KIMI_API_KEY=${key}
-KIMI_MODEL=${KIMI_MODEL}
+AI_PROVIDER=${ai_provider}
+AI_API_KEY=${api_key}
+AI_API_URL=${api_url}
+AI_OCR_API_URL=${ocr_api_url}
+AI_TEXT_MODEL=${text_model}
+AI_VISION_MODEL=${vision_model}
+ADVISOR_MODEL=${advisor_model}
+KIMI_API_KEY=${kimi_api_key}
+KIMI_API_URL=${kimi_api_url}
+KIMI_MODEL=${kimi_model}
+KIMI_VISION_MODEL=${kimi_vision_model}
 NODE_ENV=production
 EOF
   chmod 600 "${APP_DIR}/.env.local"
+
+  mkdir -p "${APP_DIR}/data"
+  if [[ ! -f "${APP_DIR}/data/holdings.json" ]]; then
+    printf '{\n  "holdings": [],\n  "updatedAt": ""\n}\n' > "${APP_DIR}/data/holdings.json"
+  fi
+  if [[ ! -f "${APP_DIR}/data/cache.json" ]]; then
+    printf '{\n  "items": []\n}\n' > "${APP_DIR}/data/cache.json"
+  fi
+
+  log "写入应用设置：${APP_DIR}/data/settings.json"
+  cat > "${APP_DIR}/data/settings.json" <<EOF
+{
+  "aiProvider": "${ai_provider}",
+  "apiUrl": "${api_url}",
+  "ocrApiUrl": "${ocr_api_url}",
+  "textModel": "${text_model}",
+  "visionModel": "${vision_model}",
+  "advisorModel": "${advisor_model}",
+  "advisorRole": "你是观澜理财师，一名资深 A 股股票交易专家。你擅长从板块强弱、主力资金、K线位置、量能、消息催化和风险位综合判断交易机会。",
+  "advisorStyle": "风格偏激进，回答简约直接。优先给结论、买卖触发价、仓位和风险位；少讲空话。所有内容仅作交易分析辅助，不承诺收益。",
+  "apiKey": "${api_key}",
+  "kimiApiUrl": "${kimi_api_url}",
+  "kimiModel": "${kimi_model}",
+  "kimiVisionModel": "${kimi_vision_model}",
+  "kimiApiKey": "${kimi_api_key}",
+  "useCache": ${use_cache_bool},
+  "marketDataSource": "${market_source}"
+}
+EOF
+  chmod 600 "${APP_DIR}/data/settings.json"
+  chown -R "${SERVICE_USER}:${SERVICE_USER}" "${APP_DIR}/data" "${APP_DIR}/.env.local"
 }
 
 sync_app_files() {
@@ -168,6 +331,7 @@ write_nginx_conf() {
   if [[ "$DOMAIN" == "_" || -z "$DOMAIN" ]]; then
     listen_line="listen 80 default_server;"
     server_name="_"
+    rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
   fi
 
   cat > "$NGINX_CONF" <<EOF

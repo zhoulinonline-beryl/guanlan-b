@@ -3,41 +3,58 @@ const fs = require("fs");
 const path = require("path");
 const { execFile } = require("child_process");
 const { promisify } = require("util");
+const {
+  root,
+  PORT,
+  HOST,
+  RECOMMEND_REFRESH_MS
+} = require("./src/server/config");
+const {
+  normalizeAiApiUrl,
+  readAppSettings,
+  writeAppSettings,
+  publicSettings
+} = require("./src/server/storage/settingsStore");
+const {
+  cacheGet,
+  cacheSet,
+  loadPersistentCache,
+  clearRuntimeCache
+} = require("./src/server/storage/cacheStore");
+const {
+  readHoldingsStore,
+  writeHoldingsStore
+} = require("./src/server/storage/holdingsStore");
+const {
+  readMarketSnapshot,
+  writeMarketSnapshot,
+  updateMarketSnapshot,
+  snapshotFallback
+} = require("./src/server/storage/marketSnapshotStore");
+const { redactLogText } = require("./src/server/utils/security");
+const { isAshareTradingAutoRefreshTime } = require("./src/server/utils/time");
+const { average, roundLot, splitLots, moneyText, toFixedText } = require("./src/server/utils/number");
+const { marketOf } = require("./src/server/market/symbols");
+const { trendScore, technicalOpportunityScore } = require("./src/server/market/indicators");
+const { createMarketProviders } = require("./src/server/market/providers");
+const { createMarketService } = require("./src/server/market/marketService");
+const {
+  aiConfig,
+  aiFallbackUrls,
+  chatCompletion,
+  hasAiKey,
+  kimiChatOptions,
+  kimiWebSearchJson,
+  kimiJson,
+  kimiVisionJson
+} = require("./src/server/ai/kimiClient");
+const { createStartupMarketSnapshotJob } = require("./src/server/jobs/marketSnapshotJob");
+const { startRecommendationRefreshJob } = require("./src/server/jobs/recommendationRefreshJob");
+const { createRecommendationService } = require("./src/server/recommendations/recommendationService");
+const { createApiRouter } = require("./src/server/routes/apiRouter");
+const { createNewsService } = require("./src/server/news/newsService");
 
-const root = __dirname;
 const execFileAsync = promisify(execFile);
-
-loadLocalEnv();
-
-const PORT = Number(process.env.PORT || 5173);
-const HOST = "127.0.0.1";
-const jsonHeaders = { "Content-Type": "application/json;charset=utf-8", "Cache-Control": "no-store" };
-const KIMI_API_KEY = process.env.KIMI_API_KEY || process.env.MOONSHOT_API_KEY || "";
-const KIMI_MODEL = process.env.KIMI_MODEL || "moonshot-v1-auto";
-const KIMI_VISION_MODEL = process.env.KIMI_VISION_MODEL || "moonshot-v1-8k-vision-preview";
-const KIMI_API_URL = process.env.KIMI_API_URL || "https://api.moonshot.ai/v1/chat/completions";
-const RECOMMEND_REFRESH_MS = 15 * 60 * 1000;
-const CN_MARKET_CLOSED_DATES_2026 = new Set([
-  "2026-01-01", "2026-01-02", "2026-01-03",
-  "2026-02-15", "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20", "2026-02-21", "2026-02-22", "2026-02-23",
-  "2026-04-04", "2026-04-05", "2026-04-06",
-  "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05",
-  "2026-06-19", "2026-06-20", "2026-06-21",
-  "2026-09-25", "2026-09-26", "2026-09-27",
-  "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06", "2026-10-07"
-]);
-const DATA_DIR = path.join(root, "data");
-const HOLDINGS_FILE = path.join(DATA_DIR, "holdings.json");
-const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
-const CACHE_FILE = path.join(DATA_DIR, "cache.json");
-const MARKET_SNAPSHOT_FILE = path.join(DATA_DIR, "market-snapshot.json");
-const recommendationCache = {
-  status: "idle",
-  data: [],
-  refreshedAt: "",
-  nextRefreshAt: "",
-  error: ""
-};
 const staticTypes = {
   ".html": "text/html;charset=utf-8",
   ".js": "text/javascript;charset=utf-8",
@@ -46,202 +63,8 @@ const staticTypes = {
   ".png": "image/png"
 };
 
-const cache = new Map();
-let cacheFlushTimer = null;
-const DEFAULT_SETTINGS = {
-  aiProvider: "kimi",
-  kimiApiUrl: process.env.KIMI_API_URL || "https://api.moonshot.ai/v1/chat/completions",
-  kimiModel: process.env.KIMI_MODEL || "moonshot-v1-auto",
-  kimiVisionModel: process.env.KIMI_VISION_MODEL || "moonshot-v1-8k-vision-preview",
-  advisorModel: process.env.ADVISOR_MODEL || "kimi-k2.5",
-  advisorRole: "你是观澜理财师，一名资深 A 股股票交易专家。你擅长从板块强弱、主力资金、K线位置、量能、消息催化和风险位综合判断交易机会。",
-  advisorStyle: "风格偏激进，回答简约直接。优先给结论、买卖触发价、仓位和风险位；少讲空话。所有内容仅作交易分析辅助，不承诺收益。",
-  kimiApiKey: process.env.KIMI_API_KEY || process.env.MOONSHOT_API_KEY || "",
-  useCache: true,
-  marketDataSource: process.env.MARKET_DATA_SOURCE || "auto"
-};
-const EASTMONEY_UT = "b2884a393a59ad64002292a3e90d46a5";
-const majorIndices = [
-  ["sh000001", "上证指数"],
-  ["sz399001", "深证成指"],
-  ["sz399006", "创业板指"],
-  ["sh000688", "科创50"],
-  ["sh000300", "沪深300"],
-  ["sh000905", "中证500"],
-  ["sh000016", "上证50"],
-  ["bj899050", "北证50"]
-];
-
-function loadLocalEnv() {
-  const files = [".env.local", ".env"];
-  for (const file of files) {
-    const full = path.join(root, file);
-    if (!fs.existsSync(full)) continue;
-    const lines = fs.readFileSync(full, "utf8").split(/\r?\n/);
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const index = trimmed.indexOf("=");
-      if (index <= 0) continue;
-      const key = trimmed.slice(0, index).trim();
-      const raw = trimmed.slice(index + 1).trim();
-      const value = raw.replace(/^['"]|['"]$/g, "");
-      if (!process.env[key]) process.env[key] = value;
-    }
-  }
-}
-
-function readJsonFile(file, fallback) {
-  try {
-    if (!fs.existsSync(file)) return fallback;
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {
-    return fallback;
-  }
-}
-
-function writeJsonFile(file, data) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
-}
-
-function readAppSettings() {
-  const stored = readJsonFile(SETTINGS_FILE, {});
-  return { ...DEFAULT_SETTINGS, ...stored };
-}
-
-function normalizeKimiApiUrl(url = "") {
-  return String(url || "").trim() || DEFAULT_SETTINGS.kimiApiUrl;
-}
-
-function kimiChatOptions(model, base = {}) {
-  const text = String(model || "");
-  if (/^kimi-k2\./.test(text)) {
-    return {
-      ...base,
-      temperature: 0.6,
-      thinking: { type: "disabled" }
-    };
-  }
-  return {
-    ...base,
-    temperature: 0.35
-  };
-}
-
-function kimiFallbackUrls(primaryUrl) {
-  const urls = [normalizeKimiApiUrl(primaryUrl)];
-  for (const item of [
-    "https://api.moonshot.cn/v1/chat/completions",
-    "https://api.moonshot.ai/v1/chat/completions"
-  ]) {
-    if (!urls.includes(item)) urls.push(item);
-  }
-  return urls;
-}
-
-function writeAppSettings(next = {}) {
-  const current = readAppSettings();
-  const source = normalizeMarketDataSource(next.marketDataSource || current.marketDataSource || DEFAULT_SETTINGS.marketDataSource);
-  const clean = {
-    aiProvider: "kimi",
-    kimiApiUrl: normalizeKimiApiUrl(next.kimiApiUrl || current.kimiApiUrl || DEFAULT_SETTINGS.kimiApiUrl),
-    kimiModel: String(next.kimiModel || current.kimiModel || DEFAULT_SETTINGS.kimiModel).trim(),
-    kimiVisionModel: String(next.kimiVisionModel || current.kimiVisionModel || DEFAULT_SETTINGS.kimiVisionModel).trim(),
-    advisorModel: String(next.advisorModel || current.advisorModel || DEFAULT_SETTINGS.advisorModel).trim(),
-    advisorRole: String(next.advisorRole ?? current.advisorRole ?? DEFAULT_SETTINGS.advisorRole).trim(),
-    advisorStyle: String(next.advisorStyle ?? current.advisorStyle ?? DEFAULT_SETTINGS.advisorStyle).trim(),
-    kimiApiKey: next.kimiApiKey === "__KEEP__" ? current.kimiApiKey : String(next.kimiApiKey ?? current.kimiApiKey ?? "").trim(),
-    useCache: Boolean(next.useCache),
-    marketDataSource: source
-  };
-  writeJsonFile(SETTINGS_FILE, clean);
-  return clean;
-}
-
-function publicSettings(settings = readAppSettings()) {
-  return {
-    aiProvider: settings.aiProvider,
-    kimiApiUrl: normalizeKimiApiUrl(settings.kimiApiUrl),
-    kimiModel: settings.kimiModel,
-    kimiVisionModel: settings.kimiVisionModel,
-    advisorModel: settings.advisorModel,
-    advisorRole: settings.advisorRole,
-    advisorStyle: settings.advisorStyle,
-    useCache: settings.useCache,
-    marketDataSource: normalizeMarketDataSource(settings.marketDataSource),
-    hasKimiApiKey: Boolean(settings.kimiApiKey),
-    kimiApiKeyMasked: maskSecret(settings.kimiApiKey)
-  };
-}
-
-function normalizeMarketDataSource(source = "auto") {
-  const value = String(source || "auto").trim();
-  return ["auto", "tencent", "eastmoney", "sina"].includes(value) ? value : "auto";
-}
-
-function marketDataSource() {
-  return normalizeMarketDataSource(readAppSettings().marketDataSource);
-}
-
-function maskSecret(value = "") {
-  const text = String(value || "");
-  if (!text) return "";
-  if (text.length <= 10) return "********";
-  return `${text.slice(0, 4)}****${text.slice(-4)}`;
-}
-
-function chinaMarketNow(now = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Shanghai",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(now);
-  const get = (type) => parts.find((item) => item.type === type)?.value || "";
-  return {
-    date: `${get("year")}-${get("month")}-${get("day")}`,
-    weekday: get("weekday"),
-    minutes: Number(get("hour")) * 60 + Number(get("minute"))
-  };
-}
-
-function isAshareTradingAutoRefreshTime(now = new Date()) {
-  const market = chinaMarketNow(now);
-  if (market.weekday === "Sat" || market.weekday === "Sun") return false;
-  if (CN_MARKET_CLOSED_DATES_2026.has(market.date)) return false;
-  const inMorning = market.minutes >= 9 * 60 + 15 && market.minutes <= 11 * 60 + 30;
-  const inAfternoon = market.minutes >= 13 * 60 && market.minutes <= 15 * 60;
-  return inMorning || inAfternoon;
-}
-
-function aiConfig() {
-  const settings = readAppSettings();
-  return {
-    apiKey: settings.kimiApiKey || KIMI_API_KEY,
-    model: settings.kimiModel || KIMI_MODEL,
-    visionModel: settings.kimiVisionModel || KIMI_VISION_MODEL,
-    advisorModel: settings.advisorModel || DEFAULT_SETTINGS.advisorModel,
-    advisorRole: settings.advisorRole || DEFAULT_SETTINGS.advisorRole,
-    advisorStyle: settings.advisorStyle || DEFAULT_SETTINGS.advisorStyle,
-    apiUrl: normalizeKimiApiUrl(settings.kimiApiUrl || KIMI_API_URL),
-    useCache: settings.useCache
-  };
-}
-
 function makeRequestId(prefix = "req") {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function redactLogText(value = "") {
-  return String(value || "")
-    .replace(/sk-[A-Za-z0-9_-]{12,}/g, "sk-****")
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer ****")
-    .slice(0, 1600);
 }
 
 function createAdvisorError(message, log = {}) {
@@ -250,134 +73,7 @@ function createAdvisorError(message, log = {}) {
   return error;
 }
 
-function hasAiKey() {
-  return Boolean(aiConfig().apiKey);
-}
-
-function readHoldingsStore() {
-  const store = readJsonFile(HOLDINGS_FILE, { holdings: [], updatedAt: "" });
-  return {
-    holdings: Array.isArray(store.holdings) ? store.holdings.map(normalizeHolding).filter((item) => item.code || item.name) : [],
-    updatedAt: store.updatedAt || ""
-  };
-}
-
-function writeHoldingsStore(holdings = []) {
-  const store = {
-    holdings: holdings.map(normalizeHolding).filter((item) => item.code || item.name).slice(0, 50),
-    updatedAt: new Date().toISOString()
-  };
-  writeJsonFile(HOLDINGS_FILE, store);
-  return store;
-}
-const indexSecids = new Map([
-  ["sh000001", "1.000001"],
-  ["sz399001", "0.399001"],
-  ["sz399006", "0.399006"],
-  ["sh000688", "1.000688"],
-  ["sh000300", "1.000300"],
-  ["sh000905", "1.000905"],
-  ["sh000016", "1.000016"],
-  ["bj899050", "0.899050"]
-]);
-const curatedSectors = [
-  ["semiconductor", "半导体", [["sh688981", "中芯国际"], ["sz002371", "北方华创"], ["sh688256", "寒武纪"], ["sh688120", "华海清科"], ["sh603986", "兆易创新"], ["sh600584", "长电科技"], ["sh603501", "韦尔股份"], ["sh688126", "沪硅产业"], ["sh688037", "芯源微"], ["sz002156", "通富微电"]]],
-  ["robot", "机器人", [["sz002747", "埃斯顿"], ["sz300124", "汇川技术"], ["sh688017", "绿的谐波"], ["sz002896", "中大力德"], ["sh603728", "鸣志电器"], ["sz300024", "机器人"], ["sz300607", "拓斯达"], ["sh603662", "柯力传感"], ["sz002472", "双环传动"], ["sh688160", "步科股份"]]],
-  ["low-altitude", "低空经济", [["sz001696", "宗申动力"], ["sz000988", "华工科技"], ["sz000099", "中信海直"], ["sz002389", "航天彩虹"], ["sh688070", "纵横股份"], ["sh688631", "莱斯信息"], ["sz002708", "光洋股份"], ["sz301091", "深城交"], ["sz002023", "海特高新"], ["sz300900", "广联航空"]]],
-  ["compute", "算力租赁", [["sh601138", "工业富联"], ["sz300308", "中际旭创"], ["sz300502", "新易盛"], ["sz000977", "浪潮信息"], ["sz300442", "润泽科技"], ["sz000938", "紫光股份"], ["sz300383", "光环新网"], ["sh603881", "数据港"], ["sz002335", "科华数据"], ["sz300738", "奥飞数据"]]],
-  ["innovative-drug", "创新药", [["sh600276", "恒瑞医药"], ["sh688235", "百济神州"], ["sh603259", "药明康德"], ["sz300558", "贝达药业"], ["sh688180", "君实生物"], ["sz002294", "信立泰"], ["sz002422", "科伦药业"], ["sh688331", "荣昌生物"], ["sh688062", "迈威生物"], ["sh688266", "泽璟制药"]]],
-  ["broker", "证券", [["sh600030", "中信证券"], ["sz300059", "东方财富"], ["sh601688", "华泰证券"], ["sh601211", "国泰君安"], ["sh600999", "招商证券"], ["sz000776", "广发证券"], ["sh600837", "海通证券"], ["sh601108", "财通证券"], ["sh601878", "浙商证券"], ["sh601136", "首创证券"]]],
-  ["ev", "新能源车", [["sz002594", "比亚迪"], ["sz300750", "宁德时代"], ["sh601127", "赛力斯"], ["sh601689", "拓普集团"], ["sz002920", "德赛西威"], ["sh603596", "伯特利"], ["sz002906", "华阳集团"], ["sh600699", "均胜电子"], ["sz002050", "三花智控"], ["sz300568", "星源材质"]]],
-  ["liquor", "白酒", [["sh600519", "贵州茅台"], ["sz000858", "五粮液"], ["sz000568", "泸州老窖"], ["sh600809", "山西汾酒"], ["sz002304", "洋河股份"], ["sz000596", "古井贡酒"], ["sh603369", "今世缘"], ["sh600702", "舍得酒业"], ["sz000799", "酒鬼酒"], ["sh600779", "水井坊"]]],
-  ["coal", "煤炭", [["sh601088", "中国神华"], ["sh601225", "陕西煤业"], ["sh600188", "兖矿能源"], ["sh601898", "中煤能源"], ["sh600546", "山煤国际"], ["sh601699", "潞安环能"], ["sh601666", "平煤股份"], ["sh600985", "淮北矿业"], ["sh600348", "华阳股份"], ["sz002128", "电投能源"]]],
-  ["bank", "银行", [["sh600036", "招商银行"], ["sz002142", "宁波银行"], ["sh601398", "工商银行"], ["sh601939", "建设银行"], ["sh601288", "农业银行"], ["sh600919", "江苏银行"], ["sh601838", "成都银行"], ["sh600926", "杭州银行"], ["sh601128", "常熟银行"], ["sh601166", "兴业银行"]]],
-  ["military", "军工", [["sh600760", "中航沈飞"], ["sh600893", "航发动力"], ["sz000768", "中航西飞"], ["sz002625", "光启技术"], ["sz002025", "航天电器"], ["sh688297", "中无人机"], ["sh600967", "内蒙一机"], ["sh603678", "火炬电子"], ["sz000733", "振华科技"], ["sz300395", "菲利华"]]],
-  ["real-estate", "房地产", [["sz000002", "万科A"], ["sh600048", "保利发展"], ["sz001979", "招商蛇口"], ["sz002244", "滨江集团"], ["sh600383", "金地集团"], ["sh600325", "华发股份"], ["sh600266", "城建发展"], ["sh601155", "新城控股"], ["sh600606", "绿地控股"], ["sh600895", "张江高科"]]]
-];
-
-function cacheGet(key, ttl) {
-  if (!readAppSettings().useCache) return null;
-  const item = cache.get(key);
-  if (!item || Date.now() - item.time > ttl) return null;
-  return item.value;
-}
-
-function cacheSet(key, value) {
-  if (!readAppSettings().useCache) return value;
-  cache.set(key, { time: Date.now(), value });
-  scheduleCacheFlush();
-  return value;
-}
-
-function loadPersistentCache() {
-  const stored = readJsonFile(CACHE_FILE, {});
-  Object.entries(stored).forEach(([key, item]) => {
-    if (item && Number.isFinite(Number(item.time))) cache.set(key, item);
-  });
-}
-
-function scheduleCacheFlush() {
-  if (cacheFlushTimer) return;
-  cacheFlushTimer = setTimeout(() => {
-    cacheFlushTimer = null;
-    flushPersistentCache();
-  }, 800);
-}
-
-function flushPersistentCache() {
-  if (!readAppSettings().useCache) return;
-  const maxAge = 7 * 24 * 60 * 60 * 1000;
-  const now = Date.now();
-  const rows = [...cache.entries()]
-    .filter(([, item]) => item && now - item.time <= maxAge)
-    .sort((a, b) => b[1].time - a[1].time)
-    .slice(0, 800);
-  writeJsonFile(CACHE_FILE, Object.fromEntries(rows));
-}
-
 loadPersistentCache();
-
-function readMarketSnapshot() {
-  return readJsonFile(MARKET_SNAPSHOT_FILE, {
-    updatedAt: "",
-    indices: [],
-    sectors: [],
-    stocksByBoard: {},
-    klinesByCode: {},
-    quotesByCode: {}
-  });
-}
-
-function writeMarketSnapshot(snapshot = {}) {
-  writeJsonFile(MARKET_SNAPSHOT_FILE, {
-    updatedAt: new Date().toISOString(),
-    indices: snapshot.indices || [],
-    sectors: snapshot.sectors || [],
-    stocksByBoard: snapshot.stocksByBoard || {},
-    klinesByCode: snapshot.klinesByCode || {},
-    quotesByCode: snapshot.quotesByCode || {}
-  });
-}
-
-function updateMarketSnapshot(part, key, value) {
-  const snapshot = readMarketSnapshot();
-  if (part === "indices") snapshot.indices = value || [];
-  if (part === "sectors") snapshot.sectors = value || [];
-  if (part === "stocks") snapshot.stocksByBoard = { ...(snapshot.stocksByBoard || {}), [key]: value || [] };
-  if (part === "kline") snapshot.klinesByCode = { ...(snapshot.klinesByCode || {}), [key]: value || null };
-  if (part === "quote") snapshot.quotesByCode = { ...(snapshot.quotesByCode || {}), [key]: value || null };
-  writeMarketSnapshot(snapshot);
-}
-
-function snapshotFallback(part, key = "") {
-  const snapshot = readMarketSnapshot();
-  if (part === "indices" && snapshot.indices?.length) return snapshot.indices;
-  if (part === "sectors" && snapshot.sectors?.length) return snapshot.sectors;
-  if (part === "stocks" && snapshot.stocksByBoard?.[key]?.length) return snapshot.stocksByBoard[key];
-  if (part === "kline" && snapshot.klinesByCode?.[key]) return snapshot.klinesByCode[key];
-  if (part === "quote" && snapshot.quotesByCode?.[key]) return snapshot.quotesByCode[key];
-  return null;
-}
 
 async function fetchJson(url) {
   const cached = cacheGet(url, 20_000);
@@ -465,23 +161,6 @@ function eastmoneyUrl(host, pathname, params) {
   return url.toString();
 }
 
-function marketOf(code) {
-  if (/^(6|9|688)/.test(code)) return 1;
-  if (/^(8|4|43|83|87|92)/.test(code)) return 0;
-  return 0;
-}
-
-function toNumber(value, fallback = null) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-}
-
-function symbolOf(code, market = marketOf(code)) {
-  if (String(code).startsWith("bj")) return String(code);
-  if (String(code).startsWith("sh") || String(code).startsWith("sz")) return String(code);
-  return `${Number(market) === 1 ? "sh" : "sz"}${code}`;
-}
-
 function escapeXml(text = "") {
   return String(text)
     .replace(/&amp;/g, "&")
@@ -511,405 +190,49 @@ function parseKlines(raw = []) {
   }).filter((item) => Number.isFinite(item.close));
 }
 
-async function getKlines(secid, count = 80) {
-  const url = eastmoneyUrl("push2his.eastmoney.com", "/api/qt/stock/kline/get", {
-    secid,
-    fields1: "f1,f2,f3,f4,f5,f6",
-    fields2: "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-    klt: "101",
-    fqt: "1",
-    end: "20500101",
-    lmt: String(count)
-  });
-  const json = await fetchJson(url);
-  return parseKlines(json?.data?.klines || []);
-}
+const {
+  getKlines,
+  getSinaKlines,
+  getTencentKlines,
+  getTencentQuotes,
+  getQuotesBySource
+} = createMarketProviders({ fetchJson, fetchGbkText, eastmoneyUrl, parseKlines });
 
-async function getSinaKlines(symbol, count = 120) {
-  const url = `https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData?symbol=${symbol}&scale=240&datalen=${count}`;
-  const json = await fetchJson(url);
-  return json.map((item) => ({
-    day: item.day,
-    open: Number(item.open),
-    close: Number(item.close),
-    high: Number(item.high),
-    low: Number(item.low),
-    volume: Number(item.volume),
-    amount: 0,
-    amplitude: 0,
-    pct: 0,
-    change: 0,
-    turnover: 0
-  })).filter((item) => Number.isFinite(item.close));
-}
+const marketService = createMarketService({
+  fetchJson,
+  fetchGbkText,
+  eastmoneyUrl,
+  getKlines,
+  getSinaKlines,
+  getTencentKlines,
+  getTencentQuotes,
+  getQuotesBySource
+});
 
-async function getTencentKlines(symbol, count = 14) {
-  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${symbol},day,,,${count},qfq`;
-  const json = await fetchJson(url);
-  const rows = json?.data?.[symbol]?.day || json?.data?.[symbol]?.qfqday || [];
-  return rows.map((item, index) => {
-    const [day, open, close, high, low, volume] = item;
-    const prevClose = index > 0 ? Number(rows[index - 1][2]) : Number(open);
-    const change = Number(close) - prevClose;
-    const pct = prevClose ? (change / prevClose) * 100 : 0;
-    return {
-      day,
-      open: Number(open),
-      close: Number(close),
-      high: Number(high),
-      low: Number(low),
-      volume: Number(volume),
-      amount: Number(volume),
-      amplitude: prevClose ? ((Number(high) - Number(low)) / prevClose) * 100 : 0,
-      pct,
-      change,
-      turnover: 0
-    };
-  }).filter((item) => Number.isFinite(item.close));
-}
+const {
+  normalizeSectorName,
+  stockAdviceForServer,
+  findCuratedStocksInText,
+  findSectorForCode,
+  getQuote,
+  getIndices,
+  getIndexKline,
+  getSectors,
+  getStocks,
+  getStockKline
+} = marketService;
 
-async function getTencentQuotes(symbols) {
-  const url = `https://qt.gtimg.cn/q=${symbols.join(",")}`;
-  const text = await fetchGbkText(url);
-  const map = new Map();
-  text.split(";").forEach((line) => {
-    const match = line.match(/v_([a-z]{2}\d+)="([^"]*)"/);
-    if (!match) return;
-    const parts = match[2].split("~");
-    map.set(match[1], {
-      symbol: match[1],
-      name: parts[1],
-      code: parts[2],
-      price: Number(parts[3]),
-      prevClose: Number(parts[4]),
-      open: Number(parts[5]),
-      volume: Number(parts[6]),
-      change: Number(parts[31]),
-      pct: Number(parts[32]),
-      high: Number(parts[33]),
-      low: Number(parts[34]),
-      amount: Number(parts[37]) * 10000,
-      turnover: Number(parts[38]),
-      marketCap: Number(parts[45]),
-      source: "tencent"
-    });
-  });
-  return map;
-}
-
-async function getSinaQuotes(symbols) {
-  const url = `https://hq.sinajs.cn/list=${symbols.join(",")}`;
-  const text = await fetchGbkText(url);
-  const map = new Map();
-  text.split(";").forEach((line) => {
-    const match = line.match(/var hq_str_([a-z]{2}\d+)="([^"]*)"/);
-    if (!match) return;
-    const symbol = match[1];
-    const parts = match[2].split(",");
-    const code = symbol.slice(2);
-    const open = Number(parts[1]);
-    const prevClose = Number(parts[2]);
-    const price = Number(parts[3]);
-    const high = Number(parts[4]);
-    const low = Number(parts[5]);
-    const volume = Number(parts[8]);
-    const amount = Number(parts[9]);
-    const change = price - prevClose;
-    const pct = prevClose ? change / prevClose * 100 : 0;
-    if (!Number.isFinite(price) || !parts[0]) return;
-    map.set(symbol, {
-      symbol,
-      name: parts[0],
-      code,
-      price,
-      prevClose,
-      open,
-      volume,
-      change,
-      pct,
-      high,
-      low,
-      amount,
-      turnover: null,
-      marketCap: null,
-      source: "sina"
-    });
-  });
-  return map;
-}
-
-function eastmoneySecidFromSymbol(symbol) {
-  const code = String(symbol).replace(/^(sh|sz|bj)/, "");
-  const market = String(symbol).startsWith("sh") ? 1 : 0;
-  return `${market}.${code}`;
-}
-
-async function getEastmoneyQuotes(symbols) {
-  const secids = symbols.map(eastmoneySecidFromSymbol).join(",");
-  const url = eastmoneyUrl("push2.eastmoney.com", "/api/qt/ulist.np/get", {
-    fltt: "2",
-    invt: "2",
-    fields: "f12,f13,f14,f2,f3,f4,f5,f6,f7,f8,f15,f16,f17,f18,f20,f21,f23",
-    secids
-  });
-  const json = await fetchJson(url);
-  const rows = json?.data?.diff || [];
-  const map = new Map();
-  rows.forEach((row) => {
-    const code = String(row.f12 || "");
-    const market = Number.isFinite(Number(row.f13)) ? Number(row.f13) : marketOf(code);
-    const symbol = symbolOf(code, market);
-    const price = Number(row.f2);
-    if (!Number.isFinite(price)) return;
-    map.set(symbol, {
-      symbol,
-      name: row.f14,
-      code,
-      market,
-      price,
-      prevClose: Number(row.f18),
-      open: Number(row.f17),
-      volume: Number(row.f5),
-      change: Number(row.f4),
-      pct: Number(row.f3),
-      high: Number(row.f15),
-      low: Number(row.f16),
-      amount: Number(row.f6),
-      turnover: Number(row.f8),
-      totalMarketCap: Number(row.f20),
-      floatMarketCap: Number(row.f21),
-      pb: Number(row.f23),
-      source: "eastmoney"
-    });
-  });
-  return map;
-}
-
-function quoteProviderOrder(preferred = marketDataSource()) {
-  if (preferred === "tencent") return ["tencent", "eastmoney", "sina"];
-  if (preferred === "eastmoney") return ["eastmoney", "tencent", "sina"];
-  if (preferred === "sina") return ["sina", "tencent", "eastmoney"];
-  return ["tencent", "eastmoney", "sina"];
-}
-
-async function getQuotesBySource(symbols = [], preferred = marketDataSource()) {
-  const unique = [...new Set(symbols.filter(Boolean))];
-  let lastError = null;
-  for (const source of quoteProviderOrder(preferred)) {
-    try {
-      const quotes = source === "eastmoney"
-        ? await getEastmoneyQuotes(unique)
-        : source === "sina"
-          ? await getSinaQuotes(unique)
-          : await getTencentQuotes(unique);
-      if (quotes.size) return { quotes, source };
-      lastError = new Error(`${source} 行情源返回为空`);
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError || new Error("所有个股行情源均不可用");
-}
-
-function symbolFromStock(stock) {
-  return symbolOf(stock.code, stock.market ?? marketOf(stock.code));
-}
-
-async function withTencentStockQuotes(stocks = [], window = 5) {
-  const symbols = stocks.map(symbolFromStock);
-  const { quotes, source } = await getQuotesBySource(symbols);
-  return stocks.map((stock, index) => {
-    const symbol = symbols[index];
-    const quote = quotes.get(symbol);
-    if (!quote || !Number.isFinite(quote.price)) return stock;
-    const score = trendScore([], quote.pct, stock.mainFlow, quote.turnover, window);
-    return {
-      ...stock,
-      name: quote.name || stock.name,
-      code: quote.code || stock.code,
-      market: symbol.startsWith("sh") ? 1 : 0,
-      price: quote.price,
-      pct: quote.pct,
-      change: quote.change,
-      open: quote.open,
-      high: quote.high,
-      low: quote.low,
-      prevClose: quote.prevClose,
-      volume: quote.volume,
-      amount: quote.amount,
-      turnover: quote.turnover,
-      score,
-      quoteSource: quote.source || source,
-      source: stock.source ? `${stock.source}+${quote.source || source}` : quote.source || source
-    };
-  });
-}
-
-async function getQuote(code, market = marketOf(code)) {
-  const symbol = symbolOf(code, market);
-  const { quotes, source } = await getQuotesBySource([symbol]);
-  const quote = quotes.get(symbol);
-  if (!quote) throw new Error(`无法获取 ${code} 行情`);
-  return {
-    name: quote.name,
-    code: quote.code,
-    market: symbol.startsWith("sh") ? 1 : 0,
-    price: quote.price,
-    pct: quote.pct,
-    change: quote.change,
-    open: quote.open,
-    high: quote.high,
-    low: quote.low,
-    prevClose: quote.prevClose,
-    volume: quote.volume,
-    amount: quote.amount,
-    turnover: quote.turnover,
-    source: quote.source || source
-  };
-}
-
-async function kimiWebSearchJson({ prompt, cacheKey, ttl = 10 * 60 * 1000 }) {
-  const config = aiConfig();
-  if (!config.apiKey) throw new Error("未配置 KIMI_API_KEY");
-  const effectiveCacheKey = cacheKey ? `kimi-web:${config.model}:${cacheKey}` : "";
-  const cached = effectiveCacheKey ? cacheGet(effectiveCacheKey, ttl) : null;
-  if (cached) return cached;
-  const messages = [
-    {
-      role: "system",
-      content: [
-        "你是 A 股新闻政策分析助手。",
-        "必须使用联网搜索获取最新信息。",
-        "只输出严格 JSON，不要 Markdown，不要解释 JSON 以外的内容。",
-        "所有建议都必须是辅助性交易分析，不构成投资承诺。"
-      ].join("")
-    },
-    { role: "user", content: prompt }
-  ];
-  const tools = [{ type: "builtin_function", function: { name: "$web_search" } }];
-  let lastJson = null;
-  for (let i = 0; i < 3; i += 1) {
-    const res = await fetch(config.apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages,
-        tools,
-        temperature: 0.2,
-        thinking: { type: "disabled" }
-      })
-    });
-    if (!res.ok) throw new Error(`Kimi HTTP ${res.status}`);
-    const json = await res.json();
-    const choice = json.choices?.[0]?.message;
-    if (!choice) throw new Error("Kimi 返回为空");
-    if (choice.tool_calls?.length) {
-      messages.push(choice);
-      for (const toolCall of choice.tool_calls) {
-        messages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          name: toolCall.function?.name || "$web_search",
-          content: toolCall.function?.arguments || "{}"
-        });
-      }
-      continue;
-    }
-    lastJson = parseLooseJson(choice.content || "");
-    break;
-  }
-  if (!lastJson) throw new Error("Kimi 未返回结构化 JSON");
-  return effectiveCacheKey ? cacheSet(effectiveCacheKey, lastJson) : lastJson;
-}
-
-function parseLooseJson(text) {
-  const raw = String(text || "").trim();
-  try {
-    return JSON.parse(raw);
-  } catch {
-    const match = raw.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[0]);
-    } catch {
-      return null;
-    }
-  }
-}
-
-async function kimiJson({ system, prompt, cacheKey = "", ttl = 10 * 60 * 1000 }) {
-  const config = aiConfig();
-  if (!config.apiKey) throw new Error("未配置 KIMI_API_KEY");
-  const effectiveCacheKey = cacheKey ? `kimi-json:${config.model}:${cacheKey}` : "";
-  if (effectiveCacheKey) {
-    const cached = cacheGet(effectiveCacheKey, ttl);
-    if (cached) return cached;
-  }
-  const res = await fetch(config.apiUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: prompt }
-      ],
-      temperature: 0.1,
-      thinking: { type: "disabled" }
-    })
-  });
-  if (!res.ok) throw new Error(`Kimi HTTP ${res.status}`);
-  const json = await res.json();
-  const content = json.choices?.[0]?.message?.content || "";
-  const parsed = parseLooseJson(content);
-  if (!parsed) throw new Error("Kimi 未返回结构化 JSON");
-  return effectiveCacheKey ? cacheSet(effectiveCacheKey, parsed) : parsed;
-}
-
-async function kimiVisionJson({ system, imageData, prompt, cacheKey = "", ttl = 60 * 60 * 1000 }) {
-  const config = aiConfig();
-  if (!config.apiKey) throw new Error("未配置 KIMI_API_KEY");
-  if (!imageData) throw new Error("缺少持股图片");
-  const effectiveCacheKey = cacheKey ? `kimi-vision:${config.visionModel}:${cacheKey}` : "";
-  if (effectiveCacheKey) {
-    const cached = cacheGet(effectiveCacheKey, ttl);
-    if (cached) return cached;
-  }
-  const res = await fetch(config.apiUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`
-    },
-    body: JSON.stringify({
-      model: config.visionModel,
-      messages: [
-        { role: "system", content: system },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: prompt },
-            { type: "image_url", image_url: { url: imageData } }
-          ]
-        }
-      ],
-      temperature: 0.1
-    })
-  });
-  if (!res.ok) throw new Error(`Kimi OCR HTTP ${res.status}`);
-  const json = await res.json();
-  const content = json.choices?.[0]?.message?.content || "";
-  const parsed = parseLooseJson(content);
-  if (!parsed) throw new Error("Kimi OCR 未返回结构化 JSON");
-  return effectiveCacheKey ? cacheSet(effectiveCacheKey, parsed) : parsed;
-}
+const {
+  getStockNews,
+  getSectorNews,
+  getSectorNewsBatch,
+  sourceFromLink
+} = createNewsService({
+  fetchText,
+  kimiWebSearchJson,
+  escapeXml,
+  normalizeSectorName
+});
 
 function normalizeChatMessages(messages = []) {
   return (Array.isArray(messages) ? messages : [])
@@ -969,12 +292,7 @@ function extractMentionedStocks(messages = [], holdings = []) {
   for (const holding of holdings || []) {
     if ((holding.code && userText.includes(holding.code)) || (holding.name && userText.includes(holding.name))) add(holding);
   }
-  for (const [, , stocks] of curatedSectors) {
-    for (const [symbol, name] of stocks) {
-      const code = symbol.slice(2);
-      if (userText.includes(name) || userText.includes(code)) add({ code, name, market: marketOf(code) });
-    }
-  }
+  findCuratedStocksInText(userText).forEach(add);
   return [...byKey.values()].slice(0, 8);
 }
 
@@ -1444,8 +762,10 @@ async function advisorChat(messages = [], contexts = []) {
     requestId,
     startedAt,
     stage: "init",
+    provider: config.provider,
+    providerLabel: config.providerLabel,
     model: config.advisorModel,
-    apiUrl: normalizeKimiApiUrl(config.apiUrl),
+    apiUrl: normalizeAiApiUrl(config.apiUrl, config.provider),
     hasApiKey: Boolean(config.apiKey),
     messageCount: Array.isArray(messages) ? messages.length : 0,
     contextCount: Array.isArray(contexts) ? contexts.length : contexts ? 1 : 0,
@@ -1453,7 +773,7 @@ async function advisorChat(messages = [], contexts = []) {
   };
   if (!config.apiKey) {
     failureLog.stage = "config";
-    throw createAdvisorError("未配置 KIMI_API_KEY", failureLog);
+    throw createAdvisorError(`未配置 ${config.providerLabel || config.provider} AK`, failureLog);
   }
   const userMessages = normalizeChatMessages(messages);
   const currentTime = currentSystemTimeText();
@@ -1554,66 +874,45 @@ async function advisorChat(messages = [], contexts = []) {
   payloadMessages.push(...userMessages);
   let json = null;
   let lastError = "";
-  for (const apiUrl of kimiFallbackUrls(config.apiUrl)) {
+  for (const apiUrl of aiFallbackUrls(config.apiUrl, config.provider)) {
     const attempt = {
       apiUrl,
       model: config.advisorModel,
       startedAt: new Date().toISOString()
     };
-    failureLog.stage = "kimi-call";
+    failureLog.stage = "ai-call";
     try {
-      const res = await fetch(apiUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${config.apiKey}`
-        },
-        body: JSON.stringify({
-          model: config.advisorModel,
-          messages: payloadMessages,
-          max_tokens: 800,
-          ...kimiChatOptions(config.advisorModel)
-        })
+      const requestConfig = { ...config, apiUrl };
+      json = await chatCompletion({
+        model: config.advisorModel,
+        messages: payloadMessages,
+        maxTokens: 800,
+        providerConfig: requestConfig,
+        extra: kimiChatOptions(config.advisorModel, {}, config.provider)
       });
-      attempt.status = res.status;
-      attempt.ok = res.ok;
+      attempt.status = 200;
+      attempt.ok = true;
       attempt.finishedAt = new Date().toISOString();
-      if (res.ok) {
-        json = await res.json();
-        failureLog.attempts.push(attempt);
-        break;
-      }
-      let detail = "";
-      let raw = "";
-      try {
-        raw = await res.text();
-        const errorJson = JSON.parse(raw);
-        detail = errorJson?.error?.message || errorJson?.message || raw;
-      } catch {
-        detail = raw || "";
-      }
-      attempt.error = redactLogText(detail || `HTTP ${res.status}`);
-      lastError = `Kimi HTTP ${res.status}${detail ? `：${String(detail).slice(0, 120)}` : ""}`;
       failureLog.attempts.push(attempt);
-      if (res.status !== 401) break;
+      break;
     } catch (error) {
       attempt.ok = false;
       attempt.finishedAt = new Date().toISOString();
       attempt.error = redactLogText(error.stack || error.message);
       failureLog.attempts.push(attempt);
-      lastError = error.message || "Kimi 请求异常";
+      lastError = error.message || `${config.providerLabel || config.provider} 请求异常`;
       break;
     }
   }
   if (!json) {
-    failureLog.stage = "kimi-call";
+    failureLog.stage = "ai-call";
     failureLog.finishedAt = new Date().toISOString();
     failureLog.lastError = redactLogText(lastError);
     console.error("[advisor-chat-failed]", JSON.stringify(failureLog));
     if (/401|Invalid Authentication/.test(lastError)) {
-      throw createAdvisorError("Kimi 鉴权失败：当前 AK 与 API 地址不匹配，或 AK 已失效。请在设置页重新填写对应平台的 Kimi AK 后保存并应用。", failureLog);
+      throw createAdvisorError(`${config.providerLabel || config.provider} 鉴权失败：当前 AK 与 API 地址不匹配，或 AK 已失效。请在设置页重新填写对应平台 AK 后保存并应用。`, failureLog);
     }
-    throw createAdvisorError(lastError || "Kimi 调用失败", failureLog);
+    throw createAdvisorError(lastError || `${config.providerLabel || config.provider} 调用失败`, failureLog);
   }
   const choice = json.choices?.[0]?.message;
   if (!choice) {
@@ -1621,7 +920,7 @@ async function advisorChat(messages = [], contexts = []) {
     failureLog.finishedAt = new Date().toISOString();
     failureLog.responsePreview = redactLogText(JSON.stringify(json).slice(0, 1200));
     console.error("[advisor-chat-failed]", JSON.stringify(failureLog));
-    throw createAdvisorError("Kimi 返回为空", failureLog);
+    throw createAdvisorError(`${config.providerLabel || config.provider} 返回为空`, failureLog);
   }
   let content = String(choice.content || "").trim();
   if (holdingsContext.used && holdingsContext.brief) {
@@ -1643,212 +942,6 @@ async function advisorChat(messages = [], contexts = []) {
     appDataContextUsed: appDataContext.used,
     appDataContextBrief: appDataContext.brief
   };
-}
-
-function normalizeKimiNewsItems(items = [], limit = 10, fallbackName = "") {
-  const oldest = Date.now() - 181 * 24 * 60 * 60 * 1000;
-  return items
-    .filter((item) => item && item.title && item.link)
-    .map((item) => {
-      const pubDate = item.pubDate || item.date || "";
-      const time = item.time ? Number(item.time) : Date.parse(pubDate) || 0;
-      const kind = item.kind || (/政策|发改委|工信部|财政部|证监会|国常会|规划|补贴|监管|标准|通知/.test(`${item.title} ${item.summary || ""}`) ? "政策" : "新闻");
-      const tone = item.tone || "中性观察";
-      return {
-        title: String(item.title).trim(),
-        link: String(item.link).trim(),
-        description: item.summary || item.description || "",
-        pubDate,
-        time,
-        source: item.source || sourceFromLink(item.link),
-        kind,
-        tone,
-        impact: item.impact || `${kind}${tone}：${fallbackName || "相关方向"} 需关注${String(item.title).replace(/\s+/g, "")}`,
-        advice: item.advice || "结合价格、量能和资金强弱确认，不单独依据消息面追涨杀跌。",
-        reason: item.reason || item.impact || "消息面仅作为辅助变量，需等待技术面和资金面确认。"
-      };
-    })
-    .filter((item) => !item.time || (item.time <= Date.now() + 60 * 60 * 1000 && item.time >= oldest))
-    .slice(0, limit);
-}
-
-async function getKimiStockNews(code, name, limit = 10) {
-  const stockName = name || code;
-  const prompt = [
-    `请全网搜索优先最近1天与 A 股股票「${stockName} ${code}」直接相关的新闻、公告、政策、产业催化或监管信息，最多${limit}条。`,
-    `今天是 ${new Date().toISOString().slice(0, 10)}，不要返回未来日期的信息。`,
-    "如果最近1天不足3条，请放宽到最近30天；如果仍不足，再最多放宽到最近180天，但必须在 pubDate 标注真实发布日期，不要编造。",
-    "必须是直接影响该上市公司本身的信息；如果股票名称也是券商/研究机构，排除其发布的行业研报、评级观点、策略报告，除非新闻直接涉及该公司公告、业绩、股东、融资、并购、监管、主营业务或股价交易。",
-    "请优先选择权威媒体、交易所公告、公司公告、证券媒体、政策发布源。",
-    "返回 JSON：{\"items\":[{\"title\":\"\",\"link\":\"\",\"source\":\"\",\"pubDate\":\"YYYY-MM-DD HH:mm\",\"kind\":\"政策|新闻|公告\",\"tone\":\"偏正面|偏负面|中性观察\",\"summary\":\"一句话摘要\",\"impact\":\"对该股的影响判断\",\"reason\":\"为什么影响交易判断\",\"advice\":\"具体操作建议\"}]}。",
-    "advice 要具体说明建仓/持有/减仓/观察条件，例如结合 K 线、MACD、SAR、BOLL 或主力资金确认。"
-  ].join("\n");
-  const json = await kimiWebSearchJson({
-    prompt,
-    cacheKey: `kimi-stock-news:${code}:${stockName}:${limit}`
-  });
-  return normalizeKimiNewsItems(json.items || [], limit, stockName);
-}
-
-async function getStockNews(code, name, limit = 10) {
-  try {
-    const items = await getKimiStockNews(code, name, limit);
-    if (items.length) return items;
-  } catch {
-    // Kimi 失败时回退到 RSS，保证页面仍可用。
-  }
-  const keyword = encodeURIComponent(`A股 ${name || ""} ${code}`);
-  const url = `https://www.bing.com/news/search?q=${keyword}&format=rss&setlang=zh-CN`;
-  const text = await fetchText(url);
-  const items = parseRssItems(text);
-  const since = Date.now() - 24 * 60 * 60 * 1000;
-  return items
-    .filter((item) => item.title && item.link)
-    .filter((item) => !item.time || item.time >= since)
-    .sort((a, b) => stockNewsScore(b, code, name) - stockNewsScore(a, code, name))
-    .map((item) => ({ ...item, ...stockNewsAdvice(item, code, name) }))
-    .slice(0, limit);
-}
-
-function decodeBingNewsLink(link) {
-  try {
-    const parsed = new URL(link);
-    const target = parsed.searchParams.get("url");
-    return target ? decodeURIComponent(target) : link;
-  } catch {
-    return link;
-  }
-}
-
-function sourceFromLink(link) {
-  try {
-    const target = decodeBingNewsLink(link);
-    return new URL(target).hostname.replace(/^www\./, "");
-  } catch {
-    return "Bing News";
-  }
-}
-
-function parseRssItems(text) {
-  return [...String(text).matchAll(/<item>([\s\S]*?)<\/item>/g)].map((match) => {
-    const block = match[1];
-    const rawLink = escapeXml(block.match(/<link>([\s\S]*?)<\/link>/)?.[1] || "");
-    const link = decodeBingNewsLink(rawLink);
-    const title = escapeXml(block.match(/<title>([\s\S]*?)<\/title>/)?.[1] || "");
-    const description = escapeXml(block.match(/<description>([\s\S]*?)<\/description>/)?.[1] || "").replace(/<[^>]+>/g, "");
-    const pubDate = escapeXml(block.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1] || "");
-    return { title, link, description, pubDate, time: Date.parse(pubDate) || 0, source: sourceFromLink(rawLink) };
-  });
-}
-
-function stockNewsScore(item, code, name) {
-  const text = `${item.title || ""} ${item.description || ""}`;
-  let score = item.time || 0;
-  if (name && text.includes(name)) score += 4 * 24 * 60 * 60 * 1000;
-  if (code && text.includes(code)) score += 3 * 24 * 60 * 60 * 1000;
-  if (/政策|发改委|工信部|财政部|证监会|国常会|规划|补贴|监管|标准|通知/.test(text)) score += 2 * 24 * 60 * 60 * 1000;
-  if (/主力|资金|北向|融资|机构|龙虎榜|回购|增持|减持|订单|业绩/.test(text)) score += 24 * 60 * 60 * 1000;
-  return score;
-}
-
-function stockNewsAdvice(item, code, name) {
-  const stockName = name || code || "该股";
-  const title = item.title || "";
-  const text = `${title} ${item.description || ""}`;
-  const isPolicy = /政策|发改委|工信部|财政部|证监会|国常会|规划|补贴|关税|监管|标准|发布|通知|意见|办法|方案/.test(text);
-  const titleNegative = /净卖出|净流出|减持|处罚|调查|问询|退市|诉讼|制裁|禁令|事故|立案/.test(title);
-  const titlePositive = /净买入|净流入|增持|回购|中标|订单|补贴|支持|涨停|创新高/.test(title);
-  const strongNegative = /净卖出|净流出|减持|处罚|调查|问询|退市|诉讼|制裁|禁令|事故|立案/.test(text);
-  const strongPositive = /净买入|净流入|增持|回购|中标|订单|补贴|支持|涨停|创新高/.test(text);
-  const isNegative = strongNegative || /下调|亏损|承压|风险|大跌/.test(text);
-  const isPositive = strongPositive || /上调|增长|扭亏|扩产|突破|利好|复苏/.test(text);
-  const tone = titleNegative ? "偏负面" : titlePositive ? "偏正面" : strongNegative ? "偏负面" : strongPositive ? "偏正面" : isNegative ? "偏负面" : isPositive ? "偏正面" : "中性观察";
-  const kind = isPolicy ? "政策" : "新闻";
-  const action = tone === "偏负面"
-    ? "不宜追高，先看分时承接和关键均线是否守住；已有仓位可降低到防守仓位。"
-    : tone === "偏正面"
-      ? "若 K 线放量站稳关键位且 MACD/SAR 同步转强，可用小仓位试错，避免情绪高点一次性打满。"
-      : "作为辅助变量跟踪，买卖仍以量价、BOLL 位置和资金强弱确认。";
-  const reason = tone === "偏负面"
-    ? `${stockName} 的消息面可能压制风险偏好，短线优先验证卖压是否释放。`
-    : tone === "偏正面"
-      ? `${stockName} 的消息面有利于资金关注，但需要技术面共振确认持续性。`
-      : `${stockName} 暂未出现明确单边催化，建议结合盘口和板块强度判断。`;
-  return {
-    kind,
-    tone,
-    impact: `${kind}${tone}：${item.title.replace(/\s+/g, "")}`,
-    advice: action,
-    reason
-  };
-}
-
-function policyImpact(item, sectorName) {
-  const text = `${item.title} ${item.description}`;
-  const policyTerms = /政策|发改委|工信部|财政部|证监会|国常会|规划|补贴|关税|监管|标准|发布|通知/;
-  const isPolicy = policyTerms.test(item.title) || /发改委|工信部|财政部|证监会|国常会/.test(item.description);
-  const isNegative = /下调|处罚|调查|限制|风险|亏损|减产|下跌|承压|退坡|禁令|制裁/.test(text);
-  const isPositive = /上调|支持|加码|补贴|增长|拉升|走高|涨停|突破|利好|扩产|复苏/.test(text);
-  const tone = isNegative ? "偏负面" : isPositive ? "偏正面" : "中性观察";
-  const kind = isPolicy ? "政策" : "新闻";
-  return `${kind}${tone}：${sectorName} 需关注${item.title.replace(/\s+/g, "")}`;
-}
-
-function sectorNewsScore(item, sectorName) {
-  const title = item.title || "";
-  const description = item.description || "";
-  const normalized = normalizeSectorName(sectorName);
-  const titleHit = title.includes(sectorName) || title.includes(normalized);
-  const descHit = description.includes(sectorName) || description.includes(normalized);
-  const policyHit = /政策|发改委|工信部|财政部|证监会|国常会|规划|补贴|关税|监管|标准|发布|通知/.test(`${title} ${description}`);
-  const recency = item.time ? Math.max(0, 2 - (Date.now() - item.time) / (24 * 60 * 60 * 1000)) : 0.5;
-  return (titleHit ? 8 : 0) + (descHit ? 4 : 0) + (policyHit ? 2 : 0) + recency;
-}
-
-async function getSectorNews(name, limit = 3) {
-  try {
-    const items = await getKimiSectorNews(name, limit);
-    if (items.length) return items;
-  } catch {
-    // Kimi 失败时回退到 RSS。
-  }
-  const keyword = encodeURIComponent(`A股 ${name} 板块 政策 新闻`);
-  const url = `https://www.bing.com/news/search?q=${keyword}&format=rss&setlang=zh-CN`;
-  const text = await fetchText(url);
-  const since = Date.now() - 24 * 60 * 60 * 1000;
-  const items = parseRssItems(text)
-    .filter((item) => item.title && item.link)
-    .map((item) => ({
-      ...item,
-      impact: policyImpact(item, name)
-    }))
-    .sort((a, b) => sectorNewsScore(b, name) - sectorNewsScore(a, name));
-  return items.filter((item) => !item.time || item.time >= since).slice(0, limit);
-}
-
-async function getKimiSectorNews(name, limit = 3) {
-  const prompt = [
-    `请全网搜索优先最近1天可能影响 A 股「${name}」板块的新闻、政策、产业事件或监管信息，最多${limit}条。`,
-    `今天是 ${new Date().toISOString().slice(0, 10)}，不要返回未来日期的信息。`,
-    "如果最近1天不足3条，请放宽到最近30天；如果仍不足，再最多放宽到最近180天，但必须在 pubDate 标注真实发布日期，不要编造。",
-    "请优先选择政策发布源、权威媒体、交易所/协会/公司公告、证券媒体。",
-    "返回 JSON：{\"items\":[{\"title\":\"\",\"link\":\"\",\"source\":\"\",\"pubDate\":\"YYYY-MM-DD HH:mm\",\"kind\":\"政策|新闻|公告\",\"tone\":\"偏正面|偏负面|中性观察\",\"summary\":\"一句话摘要\",\"impact\":\"对该板块的影响判断\",\"reason\":\"为什么影响该板块\",\"advice\":\"对板块交易的具体建议\"}]}。",
-    "impact 必须直接提到板块名称；advice 要说明是追踪、试仓、等待确认还是风险规避。"
-  ].join("\n");
-  const json = await kimiWebSearchJson({
-    prompt,
-    cacheKey: `kimi-sector-news:${name}:${limit}`
-  });
-  return normalizeKimiNewsItems(json.items || [], limit, name);
-}
-
-async function getSectorNewsBatch(names = []) {
-  const unique = [...new Set(names.map((name) => String(name || "").trim()).filter(Boolean))].slice(0, 12);
-  const pairs = await Promise.all(unique.map(async (name) => {
-    const news = await getSectorNews(name, 3).catch(() => []);
-    return [name, news];
-  }));
-  return Object.fromEntries(pairs);
 }
 
 function parseHoldingsText(text = "") {
@@ -1991,19 +1084,11 @@ async function parsePortfolioHoldings(text = "") {
 
 async function analyzePortfolio(text) {
   const parsed = await parsePortfolioHoldings(text);
-  return analyzeHoldings(parsed, { parser: hasAiKey() ? "kimi+rules" : "rules", withNews: false });
-}
-
-function sectorForCode(code = "") {
-  const target = String(code || "").replace(/\D/g, "");
-  if (!target) return null;
-  const found = curatedSectors.find(([, , stocks]) => stocks.some(([symbol]) => symbol.slice(2) === target));
-  if (!found) return null;
-  return { id: found[0], name: found[1] };
+  return analyzeHoldings(parsed, { parser: hasAiKey() ? "ai+rules" : "rules", withNews: false });
 }
 
 async function sectorContextForHolding(code, sectorMap) {
-  const fallback = sectorForCode(code);
+  const fallback = findSectorForCode(code);
   if (!fallback) return null;
   const live = sectorMap?.get(fallback.id);
   return {
@@ -2027,24 +1112,6 @@ function holdingNewsAdvice(row) {
   return `消息面暂未形成强催化，按技术位执行：站稳关键均线才加仓，跌破支撑先控风险。`;
 }
 
-function average(values = []) {
-  const nums = values.map(Number).filter(Number.isFinite);
-  return nums.length ? nums.reduce((sum, value) => sum + value, 0) / nums.length : null;
-}
-
-function roundLot(qty) {
-  const value = Math.floor(Number(qty || 0) / 100) * 100;
-  return value >= 100 ? value : 0;
-}
-
-function splitLots(totalQty, firstRatio = 0.5) {
-  const total = roundLot(totalQty);
-  if (!total) return [0, 0];
-  const first = Math.max(100, roundLot(total * firstRatio));
-  const second = roundLot(total - first);
-  return second ? [first, second] : [total, 0];
-}
-
 function sectorPulse(sector = {}, quote = {}) {
   const sectorScore = Number(sector?.attackScore);
   const sectorPct = Number(sector?.pct);
@@ -2065,6 +1132,7 @@ function sectorPulse(sector = {}, quote = {}) {
 
 function tradingTAdvice(klines = [], quote = {}, holding = {}, sector = null) {
   const rows = klines.slice(-10).filter((row) => Number.isFinite(Number(row.close)));
+  const tech = technicalOpportunityScore(klines);
   const price = Number(quote.price);
   const qty = Number(holding.qty);
   const pulse = sectorPulse(sector, quote);
@@ -2080,7 +1148,9 @@ function tradingTAdvice(klines = [], quote = {}, holding = {}, sector = null) {
       orders: [],
       style: "观察",
       aggressiveScore: 0,
-      pulse
+      pulse,
+      technical: tech,
+      discipline: "数据不足时不硬做，避免用猜测价位交易。"
     };
   }
   const highs = rows.map((row) => Number(row.high)).filter(Number.isFinite);
@@ -2101,30 +1171,50 @@ function tradingTAdvice(klines = [], quote = {}, holding = {}, sector = null) {
   const prevClose = closes.at(-2) || lastClose;
   const momentum = prevClose ? ((lastClose - prevClose) / prevClose) * 100 : 0;
   const cost = Number(holding.cost);
+  const costGapPct = Number.isFinite(cost) && cost > 0 ? ((price - cost) / cost) * 100 : null;
   const totalLotQty = roundLot(qty);
-  const volatilityBoost = rangePct >= 24 ? 18 : rangePct >= 14 ? 11 : rangePct >= 8 ? 5 : -4;
-  const locationBoost = positionInRange <= 0.25 || positionInRange >= 0.75 ? 8 : 2;
-  const volumeBoost = volRatio >= 1.25 ? 5 : volRatio <= 0.78 ? 3 : 0;
-  const aggressiveScore = Math.max(0, Math.min(100, 45 + volatilityBoost + locationBoost + volumeBoost + pulse.score));
-  const style = aggressiveScore >= 72 ? "进攻型做T" : aggressiveScore >= 58 ? "积极做T" : aggressiveScore >= 42 ? "灵活做T" : "防守做T";
-  const tradeRatio = aggressiveScore >= 72 ? 0.34 : aggressiveScore >= 58 ? 0.25 : aggressiveScore >= 42 ? 0.18 : 0.1;
-  const baseTradeQty = roundLot(totalLotQty * tradeRatio);
+  const volatilityBoost = rangePct >= 24 ? 22 : rangePct >= 14 ? 16 : rangePct >= 8 ? 10 : rangePct >= 5 ? 3 : -8;
+  const locationBoost = positionInRange <= 0.22 ? 12 : positionInRange >= 0.78 ? 11 : positionInRange <= 0.36 || positionInRange >= 0.66 ? 6 : 1;
+  const volumeBoost = volRatio >= 1.6 ? 8 : volRatio >= 1.25 ? 5 : volRatio <= 0.78 ? 4 : 0;
+  const costBoost = costGapPct === null ? 0
+    : costGapPct >= 8 ? 8
+      : costGapPct >= 3 ? 5
+        : costGapPct >= -5 ? 2
+          : costGapPct <= -12 ? -18
+            : -7;
+  const rawAggressiveScore = 42 + volatilityBoost + locationBoost + volumeBoost + pulse.score + tech.score + costBoost;
+  const aggressiveScore = Math.max(0, Math.min(100, Number.isFinite(costGapPct) && costGapPct <= -12 ? Math.min(rawAggressiveScore, 42) : rawAggressiveScore));
+  const style = aggressiveScore >= 82 ? "强攻做T" : aggressiveScore >= 70 ? "进攻型做T" : aggressiveScore >= 56 ? "积极做T" : aggressiveScore >= 42 ? "灵活做T" : "防守做T";
+  const tradeRatio = aggressiveScore >= 82 ? 0.5 : aggressiveScore >= 70 ? 0.4 : aggressiveScore >= 56 ? 0.3 : aggressiveScore >= 42 ? 0.2 : 0.12;
+  const maxTradableRatio = Number.isFinite(costGapPct) && costGapPct <= -12 ? 0.18 : 0.5;
+  const baseTradeQty = roundLot(Math.min(totalLotQty * tradeRatio, totalLotQty * maxTradableRatio));
   const maxTradeQty = baseTradeQty || (totalLotQty >= 200 ? 100 : 0);
-  const buyDepth = aggressiveScore >= 72 ? 0.992 : aggressiveScore >= 58 ? 0.987 : 0.982;
-  const sellLift = aggressiveScore >= 72 ? 1.012 : aggressiveScore >= 58 ? 1.017 : 1.022;
-  const lowBuy = Math.max(low10, Math.min(price * buyDepth, (lowAvg || price) * (aggressiveScore >= 58 ? 1.002 : 0.995)));
-  const highSell = Math.min(high10, Math.max(price * sellLift, (highAvg || price) * (aggressiveScore >= 72 ? 0.992 : 0.998)));
-  const stopLoss = Math.min(lowBuy * (aggressiveScore >= 72 ? 0.978 : 0.985), low10 * 0.99);
+  const buyDepth = aggressiveScore >= 82 ? 0.997 : aggressiveScore >= 70 ? 0.993 : aggressiveScore >= 56 ? 0.988 : 0.982;
+  const sellLift = aggressiveScore >= 82 ? 1.006 : aggressiveScore >= 70 ? 1.01 : aggressiveScore >= 56 ? 1.016 : 1.023;
+  const lowBuy = Math.max(low10, Math.min(price * buyDepth, (lowAvg || price) * (aggressiveScore >= 70 ? 1.006 : aggressiveScore >= 56 ? 1.002 : 0.995)));
+  const highSell = Math.min(high10, Math.max(price * sellLift, (highAvg || price) * (aggressiveScore >= 82 ? 0.986 : aggressiveScore >= 70 ? 0.992 : 0.998)));
+  const stopLoss = Math.min(lowBuy * (aggressiveScore >= 82 ? 0.972 : aggressiveScore >= 70 ? 0.978 : 0.985), low10 * 0.99);
   let action = style;
   let position = `${Math.round(tradeRatio * 100)}%机动仓`;
-  let plan = `强弱随盘调整：${lowBuy.toFixed(2)} 附近分批低吸，${highSell.toFixed(2)} 附近高抛，机动仓约 ${Math.round(tradeRatio * 100)}%。`;
-  let reason = `近10天振幅 ${rangePct.toFixed(1)}%，价格位于区间 ${Math.round(positionInRange * 100)}%，量能 ${volRatio >= 1.15 ? "放大" : volRatio <= 0.82 ? "收缩" : "平稳"}；${pulse.label}，激进度 ${Math.round(aggressiveScore)}。`;
+  let plan = `强弱随盘调整：${lowBuy.toFixed(2)} 附近低吸，${highSell.toFixed(2)} 附近高抛，机动仓约 ${Math.round(tradeRatio * 100)}%，底仓至少保留 50%。`;
+  let reason = `近10天振幅 ${rangePct.toFixed(1)}%，价格位于区间 ${Math.round(positionInRange * 100)}%，量能 ${volRatio >= 1.15 ? "放大" : volRatio <= 0.82 ? "收缩" : "平稳"}；${pulse.label}；${tech.macdLabel}、${tech.sarLabel}；激进度 ${Math.round(aggressiveScore)}。`;
 
   if (rangePct < 4.5) {
     action = "不适合做T";
     position = "保留底仓";
     plan = `10日波动不足，除非放量突破 ${high10.toFixed(2)} 或跌破 ${low10.toFixed(2)}，否则少动。`;
     reason = `近10天振幅仅 ${rangePct.toFixed(1)}%，做T空间不足；${pulse.label}。`;
+  } else if (Number.isFinite(costGapPct) && costGapPct <= -12) {
+    action = "防守修复T";
+    position = "10%-18%机动仓";
+    plan = `浮亏较深，先做反弹减压：${highSell.toFixed(2)} 附近高抛机动仓，只有缩量回到 ${lowBuy.toFixed(2)} 附近才接回；跌破 ${stopLoss.toFixed(2)} 不接。`;
+    reason += ` 当前浮亏 ${costGapPct.toFixed(1)}%，禁止扩大总仓位，优先控制回撤。`;
+  } else if (aggressiveScore >= 82 && pulse.score > 6 && tech.score > 4) {
+    action = positionInRange >= 0.7 ? "强攻高抛T" : "强攻低吸T";
+    position = "40%-50%机动仓";
+    plan = positionInRange >= 0.7
+      ? `强势但靠近上沿，${highSell.toFixed(2)} 先卖 40%-50% 机动仓，回落 ${lowBuy.toFixed(2)} 且板块不弱时快速接回。`
+      : `板块和技术共振，允许更主动低吸：${lowBuy.toFixed(2)} 附近先买 40%左右机动仓，冲到 ${highSell.toFixed(2)} 附近卖出当日买入部分。`;
   } else if (positionInRange >= 0.76 && momentum > 0) {
     action = aggressiveScore >= 60 ? "主动高抛T" : "先高抛后等回接";
     position = `${Math.round(tradeRatio * 100)}%机动仓`;
@@ -2140,8 +1230,13 @@ function tradingTAdvice(klines = [], quote = {}, holding = {}, sector = null) {
   }
 
   if (Number.isFinite(cost) && price < cost && action !== "不适合做T") {
-    reason += ` 当前价低于成本 ${cost.toFixed(2)}，做T以降低成本为主，不扩大总仓位。`;
+    reason += Number.isFinite(costGapPct) && costGapPct > -5 && aggressiveScore >= 70
+      ? ` 当前价略低于成本 ${cost.toFixed(2)}，允许小幅进攻T，但当天买入部分必须反弹卖出。`
+      : ` 当前价低于成本 ${cost.toFixed(2)}，做T以降低成本为主，不扩大总仓位。`;
   }
+  const allowLowBuyFirst = Number.isFinite(costGapPct)
+    ? costGapPct >= 0 || (costGapPct > -5 && aggressiveScore >= 70 && pulse.score >= 0)
+    : aggressiveScore >= 70;
   const orders = buildTOrders({
     action,
     qty: totalLotQty,
@@ -2153,7 +1248,8 @@ function tradingTAdvice(klines = [], quote = {}, holding = {}, sector = null) {
     cost,
     high10,
     low10,
-    aggressiveScore
+    aggressiveScore,
+    allowLowBuyFirst
   });
   if (!orders.length && action !== "不适合做T") {
     reason += " 持股数量不足 100 股或无可用机动仓，先观察价位，不生成买卖股数。";
@@ -2170,44 +1266,49 @@ function tradingTAdvice(klines = [], quote = {}, holding = {}, sector = null) {
     style,
     aggressiveScore,
     pulse,
-    stats: { high10, low10, rangePct, positionInRange, volRatio, closeAvg, tradeRatio }
+    technical: tech,
+    discipline: "保留底仓，跌破止损不接回；低吸只买机动仓，反弹卖出当日买入部分。",
+    stats: { high10, low10, rangePct, positionInRange, volRatio, closeAvg, tradeRatio, costGapPct }
   };
 }
 
-function buildTOrders({ action, qty, maxTradeQty, lowBuy, highSell, stopLoss, price, cost, high10, low10, aggressiveScore = 50 }) {
+function buildTOrders({ action, qty, maxTradeQty, lowBuy, highSell, stopLoss, price, cost, high10, low10, aggressiveScore = 50, allowLowBuyFirst = false }) {
   if (!qty || !maxTradeQty || action === "不适合做T" || action === "暂不做T") return [];
-  const [firstQty, secondQty] = splitLots(maxTradeQty, aggressiveScore >= 70 ? 0.42 : 0.5);
+  const [firstQty, secondQty] = splitLots(maxTradeQty, aggressiveScore >= 82 ? 0.5 : aggressiveScore >= 70 ? 0.42 : 0.5);
   const secondSellQty = secondQty || (maxTradeQty >= 200 ? 100 : 0);
   const orders = [];
-  const sell1 = Math.max(highSell, price * (aggressiveScore >= 70 ? 1.006 : 1.012));
-  const sell2 = Math.min(high10, Math.max(highSell * (aggressiveScore >= 70 ? 1.012 : 1.018), price * (aggressiveScore >= 70 ? 1.018 : 1.026)));
-  const buy1 = Math.min(lowBuy, price * (aggressiveScore >= 70 ? 0.995 : 0.988));
-  const buy2 = Math.max(low10, Math.min(lowBuy * (aggressiveScore >= 70 ? 0.989 : 0.982), price * (aggressiveScore >= 70 ? 0.985 : 0.974)));
-  const canBuyMore = Number.isFinite(cost) ? price >= cost : true;
+  const sell1 = Math.max(highSell, price * (aggressiveScore >= 82 ? 1.004 : aggressiveScore >= 70 ? 1.006 : 1.012));
+  const sell2Target = Math.max(highSell * (aggressiveScore >= 82 ? 1.008 : aggressiveScore >= 70 ? 1.012 : 1.018), price * (aggressiveScore >= 82 ? 1.014 : aggressiveScore >= 70 ? 1.018 : 1.026));
+  const sell2Ceiling = high10 > sell1 ? high10 : sell2Target;
+  const sell2 = Math.min(sell2Ceiling, sell2Target);
+  const hasSecondSell = secondSellQty && sell2 > sell1 * 1.003;
+  const buy1 = Math.min(lowBuy, price * (aggressiveScore >= 82 ? 0.998 : aggressiveScore >= 70 ? 0.995 : 0.988));
+  const buy2 = Math.max(low10, Math.min(lowBuy * (aggressiveScore >= 82 ? 0.993 : aggressiveScore >= 70 ? 0.989 : 0.982), price * (aggressiveScore >= 82 ? 0.99 : aggressiveScore >= 70 ? 0.985 : 0.974)));
+  const canBuyMore = allowLowBuyFirst || (Number.isFinite(cost) ? price >= cost : true);
 
-  if (action === "先高抛后等回接" || action === "主动高抛T" || action === "谨慎做T") {
-    orders.push({ side: "卖出", price: sell1, qty: firstQty || maxTradeQty, note: "第一档冲高先卖机动仓，锁定日内利润。" });
-    if (secondSellQty) orders.push({ side: "卖出", price: sell2, qty: secondSellQty, note: "第二档接近10日压力位再卖，避免一次卖飞。" });
-    orders.push({ side: "买回", price: buy1, qty: firstQty || maxTradeQty, note: "回落到低吸区且缩量企稳，接回第一档。" });
-    if (secondSellQty) orders.push({ side: "买回", price: buy2, qty: secondSellQty, note: "跌到第二支撑不破再接回，跌破则暂停。" });
+  if (action === "先高抛后等回接" || action === "主动高抛T" || action === "谨慎做T" || action === "强攻高抛T" || action === "防守修复T") {
+    orders.push({ side: "卖出", price: sell1, qty: firstQty || maxTradeQty, note: action === "防守修复T" ? "反弹先卖机动仓降风险，不加总仓。" : "第一档冲高先卖机动仓，锁定日内利润。" });
+    if (hasSecondSell) orders.push({ side: "卖出", price: sell2, qty: secondSellQty, note: "第二档继续冲高再卖，保留底仓观察。" });
+    orders.push({ side: "买回", price: buy1, qty: firstQty || maxTradeQty, note: "回落到低吸区且缩量企稳，接回第一档；放量下破不接。" });
+    if (hasSecondSell) orders.push({ side: "买回", price: buy2, qty: secondSellQty, note: "跌到第二支撑不破再接回，跌破则暂停。" });
     orders.push({ side: "止损", price: stopLoss, qty: maxTradeQty, note: "跌破该位不接回，保留现金等待下一次机会。" });
     return orders.filter((item) => item.qty > 0);
   }
 
-  if (action === "低吸做T" || action === "积极低吸T") {
+  if (action === "低吸做T" || action === "积极低吸T" || action === "强攻低吸T") {
     const buyQty = canBuyMore ? (firstQty || maxTradeQty) : Math.min(firstQty || maxTradeQty, qty >= 100 ? 100 : 0);
-    orders.push({ side: "买入", price: buy1, qty: buyQty, note: canBuyMore ? "低位企稳先加机动仓。" : "当前低于成本，只用小机动仓降低成本，不扩大总仓。" });
-    if (secondSellQty && canBuyMore) orders.push({ side: "买入", price: buy2, qty: secondSellQty, note: "第二支撑不破再补一档。" });
+    orders.push({ side: "买入", price: buy1, qty: buyQty, note: canBuyMore ? "低位企稳先打机动仓，反弹必须卖出当日买入部分。" : "当前低于成本，只用小机动仓降低成本，不扩大总仓。" });
+    if (secondSellQty && canBuyMore) orders.push({ side: "买入", price: buy2, qty: secondSellQty, note: "第二支撑不破再补一档，跌破不补。" });
     orders.push({ side: "卖出", price: sell1, qty: buyQty, note: "反弹到第一压力先卖出当日买入部分。" });
-    if (secondSellQty && canBuyMore) orders.push({ side: "卖出", price: sell2, qty: secondSellQty, note: "冲到第二压力卖出剩余机动仓。" });
+    if (hasSecondSell && canBuyMore) orders.push({ side: "卖出", price: sell2, qty: secondSellQty, note: "冲到第二压力卖出剩余机动仓，保留底仓。" });
     orders.push({ side: "止损", price: stopLoss, qty: buyQty, note: "低吸后跌破止损，不继续摊低。" });
     return orders.filter((item) => item.qty > 0);
   }
 
   orders.push({ side: "卖出", price: sell1, qty: firstQty || maxTradeQty, note: "冲高先卖一档机动仓。" });
-  if (secondSellQty) orders.push({ side: "卖出", price: sell2, qty: secondSellQty, note: "接近上沿再卖第二档。" });
+  if (hasSecondSell) orders.push({ side: "卖出", price: sell2, qty: secondSellQty, note: "继续冲高再卖第二档。" });
   orders.push({ side: "买回", price: buy1, qty: firstQty || maxTradeQty, note: "回踩低吸位企稳接回。" });
-  if (secondSellQty) orders.push({ side: "买回", price: buy2, qty: secondSellQty, note: "跌到第二支撑不破接回剩余。" });
+  if (hasSecondSell) orders.push({ side: "买回", price: buy2, qty: secondSellQty, note: "跌到第二支撑不破接回剩余。" });
   orders.push({ side: "止损", price: stopLoss, qty: maxTradeQty, note: "跌破不做回补，防止T变补仓。" });
   return orders.filter((item) => item.qty > 0);
 }
@@ -2310,1074 +1411,57 @@ function buildPortfolioSummary(rows = []) {
   };
 }
 
-async function getIndices() {
-  const { quotes, source } = await getQuotesBySource(majorIndices.map(([symbol]) => symbol));
-  return majorIndices.map(([symbol, fallbackName]) => {
-    const quote = quotes.get(symbol) || {};
-    return {
-      id: symbol,
-      code: quote.code || symbol.slice(2),
-      name: fallbackName,
-      price: quote.price,
-      pct: quote.pct,
-      change: quote.change,
-      high: quote.high,
-      low: quote.low,
-      open: quote.open,
-      prevClose: quote.prevClose,
-      amount: quote.amount,
-      volume: quote.volume,
-      source: quote.source || source
-    };
-  }).filter((item) => Number.isFinite(item.price));
-}
+const {
+  refreshRecommendations
+} = createRecommendationService({
+  getSectors,
+  getStocks,
+  getStockKline,
+  stockAdviceForServer
+});
 
-async function getIndexKline(symbol) {
-  const secid = indexSecids.get(symbol);
-  if (!secid) throw new Error("暂不支持该指数");
-  if (marketDataSource() === "tencent") {
-    const klines = await getTencentKlines(symbol, 14);
-    return { symbol, secid, klines, source: "tencent" };
-  }
-  if (marketDataSource() === "sina") {
-    const klines = await getSinaKlines(symbol, 14);
-    return { symbol, secid, klines, source: "sina" };
-  }
-  try {
-    const klines = await getKlines(secid, 14);
-    return { symbol, secid, klines, source: "eastmoney" };
-  } catch {
-    const klines = await getTencentKlines(symbol, 14);
-    return { symbol, secid, klines, source: "tencent" };
-  }
-}
+const ensureStartupMarketSnapshot = createStartupMarketSnapshotJob({
+  readMarketSnapshot,
+  writeMarketSnapshot,
+  getIndices,
+  getSectors,
+  getStocks,
+  getQuote,
+  getStockKline
+});
 
-function trendScore(klines, fallbackPct, mainNet = 0, turnover = 0, window = 5) {
-  const rows = klines.slice(-Math.max(2, window + 1));
-  const first = rows[0]?.close;
-  const last = rows.at(-1)?.close;
-  const trendPct = first ? ((last - first) / first) * 100 : Number(fallbackPct || 0);
-  const recentVol = rows.slice(-window).reduce((sum, item) => sum + item.volume, 0) / Math.max(1, Math.min(window, rows.length));
-  const baseVol = klines.slice(-30, -window).reduce((sum, item) => sum + item.volume, 0) / Math.max(1, klines.slice(-30, -window).length);
-  const volRatio = baseVol ? recentVol / baseVol : 1;
-  const flowPart = Math.max(-10, Math.min(22, Number(mainNet || 0) / 100_000_000 * 4));
-  const score = 48 + trendPct * 5.8 + Math.min(18, Math.max(-6, (volRatio - 1) * 24)) + flowPart + Math.min(8, Number(turnover || 0) * 0.45);
-  return Math.max(5, Math.min(99, score));
-}
-
-function emaValues(values, span) {
-  const alpha = 2 / (span + 1);
-  const result = [];
-  values.forEach((value, index) => {
-    result.push(index === 0 ? value : value * alpha + result[index - 1] * (1 - alpha));
-  });
-  return result;
-}
-
-function macdForServer(candles = []) {
-  const closes = candles.map((item) => Number(item.close)).filter(Number.isFinite);
-  if (!closes.length) return { dif: [], dea: [], hist: [] };
-  const fast = emaValues(closes, 12);
-  const slow = emaValues(closes, 26);
-  const dif = fast.map((value, index) => value - slow[index]);
-  const dea = emaValues(dif, 9);
-  const hist = dif.map((value, index) => (value - dea[index]) * 2);
-  return { dif, dea, hist };
-}
-
-function sarForServer(candles = [], step = 0.02, max = 0.2) {
-  if (!candles.length) return [];
-  let uptrend = true;
-  let af = step;
-  let ep = Number(candles[0].high);
-  let value = Number(candles[0].low);
-  return candles.map((item, index) => {
-    const high = Number(item.high);
-    const low = Number(item.low);
-    if (index === 0 || !Number.isFinite(high) || !Number.isFinite(low)) return value;
-    value = value + af * (ep - value);
-    if (uptrend) {
-      if (low < value) {
-        uptrend = false;
-        value = ep;
-        ep = low;
-        af = step;
-      } else if (high > ep) {
-        ep = high;
-        af = Math.min(max, af + step);
-      }
-    } else if (high > value) {
-      uptrend = true;
-      value = ep;
-      ep = high;
-      af = step;
-    } else if (low < ep) {
-      ep = low;
-      af = Math.min(max, af + step);
-    }
-    return value;
-  });
-}
-
-function technicalOpportunityScore(candles = []) {
-  if (!candles.length || candles.length < 35) {
-    return { score: -4, macdLabel: "MACD数据不足", sarLabel: "SAR数据不足", details: ["K线长度不足，MACD/SAR 不参与加分。"] };
-  }
-  const macd = macdForServer(candles);
-  const sar = sarForServer(candles);
-  const i = candles.length - 1;
-  const last = candles[i];
-  const prev = candles[i - 1];
-  const dif = Number(macd.dif[i]);
-  const dea = Number(macd.dea[i]);
-  const hist = Number(macd.hist[i]);
-  const prevDif = Number(macd.dif[i - 1]);
-  const prevDea = Number(macd.dea[i - 1]);
-  const prevHist = Number(macd.hist[i - 1]);
-  const sarValue = Number(sar[i]);
-  const prevSar = Number(sar[i - 1]);
-  const close = Number(last.close);
-  let score = 0;
-  const details = [];
-
-  const macdBull = dif > dea && hist > 0;
-  const macdExpanding = Number.isFinite(hist) && Number.isFinite(prevHist) && hist > prevHist;
-  const macdGoldenCross = prevDif <= prevDea && dif > dea;
-  const macdWeak = dif < dea && hist < 0;
-  if (macdBull) {
-    score += macdExpanding ? 8 : 5;
-    details.push(macdExpanding ? "MACD 多头且柱体扩张，加分较高。" : "MACD 位于多头区，加分。");
-  } else if (macdWeak) {
-    score -= 7;
-    details.push("MACD 空头区，扣分。");
-  } else {
-    score -= 1;
-    details.push("MACD 尚未形成明确多头共振。");
-  }
-  if (macdGoldenCross) {
-    score += 4;
-    details.push("MACD 最近金叉，额外加分。");
-  }
-
-  const sarBull = close > sarValue;
-  const sarFlipUp = Number(prev.close) <= prevSar && close > sarValue;
-  const sarDistance = sarValue ? ((close - sarValue) / sarValue) * 100 : 0;
-  if (sarBull) {
-    score += sarFlipUp ? 7 : 5;
-    if (sarDistance > 12) score -= 3;
-    details.push(sarFlipUp ? "SAR 刚翻多，趋势确认加分。" : "SAR 位于价格下方，趋势保护加分。");
-  } else {
-    score -= 8;
-    details.push("SAR 位于价格上方，趋势压制扣分。");
-  }
-
-  const klineConfirm = close >= Number(last.open) && close >= Number(prev.close);
-  if (klineConfirm && macdBull && sarBull) {
-    score += 3;
-    details.push("K线、MACD、SAR 同向，技术共振额外加分。");
-  }
-
-  const bounded = Math.max(-16, Math.min(22, score));
-  return {
-    score: bounded,
-    macdLabel: macdBull ? (macdExpanding ? "MACD多头扩张" : "MACD多头") : macdWeak ? "MACD空头" : "MACD待确认",
-    sarLabel: sarBull ? (sarFlipUp ? "SAR翻多" : "SAR多头保护") : "SAR趋势压制",
-    details
-  };
-}
-
-function normalizeSectorName(name = "") {
-  return String(name)
-    .replace(/\s+/g, "")
-    .replace(/板块$/, "")
-    .replace(/[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+$/u, "")
-    .replace(/[一二三四五六七八九十]+$/u, "");
-}
-
-function sectorQuality(sector) {
-  const hasMain = sector.mainNet !== null && sector.mainNet !== undefined && Number.isFinite(Number(sector.mainNet));
-  const hasQuote = Number.isFinite(Number(sector.index)) || Number.isFinite(Number(sector.pct));
-  const sourceScore = sector.source === "sohu" ? 0 : 100;
-  return (hasMain ? 1000 : 0) + (hasQuote ? 200 : 0) + sourceScore + Number(sector.attackScore || 0);
-}
-
-function dedupeSectors(sectors) {
-  const byName = new Map();
-  for (const sector of sectors) {
-    const key = normalizeSectorName(sector.name);
-    const existing = byName.get(key);
-    if (!existing || sectorQuality(sector) > sectorQuality(existing)) {
-      byName.set(key, sector);
-    }
-  }
-  return [...byName.values()];
-}
-
-function stockAdviceForServer(stock) {
-  const candles = stock.candles || [];
-  if (candles.length < 20) {
-    return {
-      action: "等待数据",
-      plan: "K 线数据不足，先按仓位和当日涨跌观察，不追加仓位。",
-      risk: "补齐 K 线后再判断止损线。",
-      position: "等待",
-      levels: {}
-    };
-  }
-  const last = candles.at(-1);
-  const lows = candles.slice(-10).map((item) => item.low);
-  const highs = candles.slice(-10).map((item) => item.high);
-  const avg20 = candles.slice(-20).reduce((sum, item) => sum + item.close, 0) / 20;
-  const upDays = candles.slice(-5).filter((item) => item.close >= item.open).length;
-  const strong = last.close > avg20 && upDays >= 3 && Number(stock.pct) > -2;
-  const tooHot = Number(stock.pct) > 7;
-  const support = Math.max(Math.min(...lows), last.close * 0.94);
-  const pullbackBuy = Math.max(avg20, last.close * 0.97);
-  const breakoutBuy = Math.max(...highs) * 1.005;
-  const firstTarget = Math.max(...highs, last.close * 1.045);
-  if (tooHot) {
-    return {
-      action: "冲高减仓",
-      plan: `当日涨幅偏高，等待回落到 ${pullbackBuy.toFixed(2)} 附近再考虑接回。`,
-      risk: `跌回 ${support.toFixed(2)} 下方说明短线转弱。`,
-      position: "降至半仓",
-      levels: { pullbackBuy, breakoutBuy, stopLoss: support, firstTarget }
-    };
-  }
-  if (strong) {
-    return {
-      action: "持有或小幅加仓",
-      plan: `趋势仍在，回踩 ${pullbackBuy.toFixed(2)} 不破可小幅加仓，突破 ${breakoutBuy.toFixed(2)} 可继续持有。`,
-      risk: `跌破 ${support.toFixed(2)} 或放量长阴应减仓。`,
-      position: "3-5成",
-      levels: { pullbackBuy, breakoutBuy, stopLoss: support, firstTarget }
-    };
-  }
-  return {
-    action: "观察减仓",
-    plan: `未站稳 20 日均线 ${avg20.toFixed(2)} 前不追加仓位。`,
-    risk: `跌破 ${support.toFixed(2)} 先控制风险。`,
-    position: "1-2成",
-    levels: { pullbackBuy, breakoutBuy, stopLoss: support, firstTarget }
-  };
-}
-
-async function getSectors(window = 5) {
-  const source = marketDataSource();
-  if (source === "tencent") {
-    try {
-      return await getFallbackSectors(window);
-    } catch {
-      // 继续走其它行情源兜底。
-    }
-  }
-  if (source === "sina") {
-    try {
-      return await getSohuFallbackSectors(window);
-    } catch {
-      // 继续走其它行情源兜底。
-    }
-  }
-  try {
-  const commonParams = {
-    pn: "1",
-    pz: "500",
-    po: "1",
-    np: "1",
-    fltt: "2",
-    invt: "2",
-    ut: EASTMONEY_UT,
-    fid: "f62",
-    fields: "f12,f14,f2,f3,f4,f5,f6,f7,f8,f10,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87,f104,f105,f106"
-  };
-  const urls = [
-    eastmoneyUrl("push2.eastmoney.com", "/api/qt/clist/get", { ...commonParams, fs: "m:90+t:2" }),
-    eastmoneyUrl("push2.eastmoney.com", "/api/qt/clist/get", { ...commonParams, fs: "m:90+t:3" })
-  ];
-  const jsonList = await Promise.all(urls.map((url) => fetchJson(url)));
-  const rows = jsonList.flatMap((json) => json?.data?.diff || []);
-  if (!rows.length) throw new Error("东方财富板块资金源暂无数据");
-  return buildSectorsFromFundRows(rows, window, "eastmoney");
-  } catch {
-    return getEastmoneyMobileFundSectors(window).catch(() => getSohuFallbackSectors(window).catch(() => getFallbackSectors(window)));
-  }
-}
-
-async function getEastmoneyMobileFundSectors(window = 5) {
-  const url = eastmoneyUrl("emdatah5.eastmoney.com", "/dc/ZJLX/getZDYLBData", {
-    fields: "f1,f2,f3,f4,f5,f6,f7,f8,f10,f12,f13,f14,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87,f104,f105,f106,f128,f140,f141",
-    pn: "1",
-    pz: "500",
-    fid: "f62",
-    po: "1",
-    fs: "m:90+t:2",
-    ut: EASTMONEY_UT
-  });
-  const json = await fetchJson(url);
-  const rows = json?.data?.diff || [];
-  if (!rows.length) throw new Error("东方财富移动板块资金源暂无数据");
-  return buildSectorsFromFundRows(rows, window, "eastmoney-mobile");
-}
-
-async function buildSectorsFromFundRows(rows, window, source) {
-  const seen = new Set();
-  const uniqueRows = rows.filter((row) => {
-    if (!row?.f12 || seen.has(row.f12)) return false;
-    seen.add(row.f12);
-    return true;
-  });
-  const sortedRows = uniqueRows.sort((a, b) => Number(b.f62 || 0) - Number(a.f62 || 0));
-  const withK = await Promise.all(sortedRows.map(async (row, index) => {
-    let klines = [];
-    let history = [];
-    if (index < 48) {
-      try {
-        klines = await getKlines(`90.${row.f12}`, 45);
-        history = klines.slice(-24).map((item) => item.close);
-      } catch {
-        klines = [];
-        history = [];
-      }
-    }
-    const score = trendScore(klines, row.f3, row.f62, row.f8, window);
-    return {
-      id: row.f12,
-      code: row.f12,
-      name: row.f14,
-      index: toNumber(row.f2),
-      pct: toNumber(row.f3),
-      change: toNumber(row.f4),
-      amount: toNumber(row.f6),
-      amplitude: toNumber(row.f7),
-      turnover: toNumber(row.f8),
-      mainNet: toNumber(row.f62),
-      mainNetPct: toNumber(row.f184),
-      superNet: toNumber(row.f66),
-      superNetPct: toNumber(row.f69),
-      bigNet: toNumber(row.f72),
-      bigNetPct: toNumber(row.f75),
-      mainInSpeed: flowSpeed(row.f6, row.f66, row.f72, "in"),
-      mainOutSpeed: flowSpeed(row.f6, row.f66, row.f72, "out"),
-      upCount: toNumber(row.f104, 0),
-      downCount: toNumber(row.f105, 0),
-      flatCount: toNumber(row.f106, 0),
-      attackScore: score,
-      history,
-      source
-    };
-  }));
-  return dedupeSectors(withK).sort((a, b) => Number(b.mainNet || 0) - Number(a.mainNet || 0));
-}
-
-function flowSpeed(amount, superNet, bigNet, mode) {
-  const base = Math.abs(toNumber(amount, 0) || 0);
-  if (!base) return null;
-  const parts = [toNumber(superNet, 0), toNumber(bigNet, 0)];
-  const value = mode === "out"
-    ? parts.filter((item) => item < 0).reduce((sum, item) => sum + Math.abs(item), 0)
-    : parts.filter((item) => item > 0).reduce((sum, item) => sum + item, 0);
-  return (value / base) * 100;
-}
-
-async function getSohuFallbackSectors(window) {
-  const text = await fetchGbkText("https://q.stock.sohu.com/cn/bk.shtml");
-  const rows = [...text.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)]
-    .map((match) => {
-      const plain = match[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-      const link = match[1].match(/bk_(\d+)\.shtml[^>]*>([^<]+)</);
-      if (!link) return null;
-      return { id: `sohu-${link[1]}`, code: `BK${link[1]}`, name: link[2], plain };
-    })
-    .filter(Boolean);
-  const base = await getFallbackSectors(window).catch(() => []);
-  const byName = new Map(base.map((item) => [normalizeSectorName(item.name), item]));
-  const seenRows = new Set();
-  const merged = rows.map((row) => {
-    const rowName = normalizeSectorName(row.name);
-    if (seenRows.has(rowName)) return null;
-    seenRows.add(rowName);
-    const enriched = byName.get(rowName);
-    if (enriched) return { ...enriched, code: enriched.code || row.code };
-    return {
-      id: row.id,
-      code: row.code,
-      name: row.name,
-      index: null,
-      pct: null,
-      change: null,
-      amount: null,
-      amplitude: null,
-      turnover: null,
-      mainNet: null,
-      upCount: 0,
-      downCount: 0,
-      flatCount: 0,
-      attackScore: 0,
-      history: [],
-      source: "sohu"
-    };
-  }).filter(Boolean);
-  const existing = new Set(merged.map((item) => normalizeSectorName(item.name)));
-  base.filter((item) => !existing.has(normalizeSectorName(item.name))).forEach((item) => merged.push(item));
-  return dedupeSectors(merged).sort((a, b) => {
-    const af = a.mainNet !== null && a.mainNet !== undefined ? Number(a.mainNet) : -Infinity;
-    const bf = b.mainNet !== null && b.mainNet !== undefined ? Number(b.mainNet) : -Infinity;
-    if (af !== bf) return bf - af;
-    return Number(b.attackScore || 0) - Number(a.attackScore || 0);
-  });
-}
-
-async function getStocks(board, window = 5) {
-  const source = marketDataSource();
-  if (source === "tencent" || source === "sina") {
-    try {
-      return await getFallbackStocks(board, window);
-    } catch {
-      // 继续走东方财富成分股资金源兜底。
-    }
-  }
-  try {
-    return await getMobileBoardFundStocks(board, window);
-  } catch {
-    try {
-  const url = eastmoneyUrl("push2.eastmoney.com", "/api/qt/clist/get", {
-    pn: "1",
-    pz: "80",
-    po: "1",
-    np: "1",
-    fltt: "2",
-    invt: "2",
-    fid: "f62",
-    fs: `b:${board}`,
-    fields: "f12,f13,f14,f2,f3,f4,f5,f6,f7,f8,f9,f10,f15,f16,f17,f18,f20,f21,f23,f62,f184"
-  });
-  const json = await fetchJson(url);
-  const rows = json?.data?.diff || [];
-  const scored = rows.map((row) => {
-    const score = trendScore([], row.f3, row.f62, row.f8, window);
-    return {
-      name: row.f14,
-      code: row.f12,
-      market: Number.isFinite(Number(row.f13)) ? Number(row.f13) : marketOf(row.f12),
-      price: Number(row.f2),
-      pct: Number(row.f3),
-      change: Number(row.f4),
-      volume: Number(row.f5),
-      amount: Number(row.f6),
-      amplitude: Number(row.f7),
-      turnover: Number(row.f8),
-      pe: Number(row.f9),
-      high: Number(row.f15),
-      low: Number(row.f16),
-      open: Number(row.f17),
-      prevClose: Number(row.f18),
-      totalMarketCap: Number(row.f20),
-      floatMarketCap: Number(row.f21),
-      pb: Number(row.f23),
-      mainFlow: Number(row.f62),
-      mainFlowPct: Number(row.f184),
-      score,
-      source: "eastmoney"
-    };
-  });
-  return (await withTencentStockQuotes(scored, window)).sort((a, b) => Number(b.mainFlow || 0) - Number(a.mainFlow || 0));
-    } catch {
-      return getFallbackStocks(board, window);
-    }
-  }
-}
-
-async function getMobileBoardFundStocks(board, window = 5) {
-  const url = eastmoneyUrl("emdatah5.eastmoney.com", "/dc/ZJLX/getZDYLBData", {
-    fields: "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f13,f14,f15,f16,f17,f18,f20,f21,f23,f62,f184,f267,f268,f164,f165,f174,f175",
-    pn: "1",
-    pz: "80",
-    fid: "f62",
-    po: "1",
-    fs: `b:${board}`,
-    ut: EASTMONEY_UT
-  });
-  const json = await fetchJson(url);
-  const rows = json?.data?.diff || [];
-  if (!rows.length) throw new Error("移动板块成分股资金源暂无数据");
-  const stocks = rows.map((row) => {
-    const score = trendScore([], row.f3, row.f62, row.f8, window);
-    return {
-      name: row.f14,
-      code: row.f12,
-      market: Number.isFinite(Number(row.f13)) ? Number(row.f13) : marketOf(row.f12),
-      price: toNumber(row.f2),
-      pct: toNumber(row.f3),
-      change: toNumber(row.f4),
-      volume: toNumber(row.f5),
-      amount: toNumber(row.f6),
-      amplitude: toNumber(row.f7),
-      turnover: toNumber(row.f8),
-      pe: toNumber(row.f9),
-      high: toNumber(row.f15),
-      low: toNumber(row.f16),
-      open: toNumber(row.f17),
-      prevClose: toNumber(row.f18),
-      totalMarketCap: toNumber(row.f20),
-      floatMarketCap: toNumber(row.f21),
-      pb: toNumber(row.f23),
-      mainFlow: toNumber(row.f62),
-      mainFlowPct: toNumber(row.f184),
-      superNet: toNumber(row.f267 ?? row.f164),
-      superNetPct: toNumber(row.f268 ?? row.f165),
-      bigNet: toNumber(row.f174),
-      bigNetPct: toNumber(row.f175),
-      mainInSpeed: flowSpeed(row.f6, row.f267 ?? row.f164, row.f174, "in"),
-      mainOutSpeed: flowSpeed(row.f6, row.f267 ?? row.f164, row.f174, "out"),
-      score,
-      source: "eastmoney-mobile-board"
-    };
-  });
-  return (await withTencentStockQuotes(stocks, window)).sort((a, b) => Number(b.mainFlow || 0) - Number(a.mainFlow || 0));
-}
-
-async function getStockKline(code, market) {
-  const resolvedMarket = market ?? marketOf(code);
-  const symbol = symbolOf(code, resolvedMarket);
-  const preferred = marketDataSource();
-  if (preferred === "tencent") {
-    try {
-      const klines = await getTencentKlines(symbol, 120);
-      return { code, market: resolvedMarket, secid: symbol, klines, source: "tencent" };
-    } catch {
-      // 继续走其它 K 线源兜底。
-    }
-  }
-  if (preferred === "sina") {
-    try {
-      const klines = await getSinaKlines(symbol, 120);
-      return { code, market: resolvedMarket, secid: symbol, klines, source: "sina" };
-    } catch {
-      // 继续走其它 K 线源兜底。
-    }
-  }
-  if (preferred === "eastmoney") {
-    try {
-      const secid = `${resolvedMarket}.${code}`;
-      const klines = await getKlines(secid, 120);
-      return { code, market: resolvedMarket, secid, klines, source: "eastmoney" };
-    } catch {
-      // 继续走其它 K 线源兜底。
-    }
-  }
-  try {
-    const klines = await getTencentKlines(symbol, 120);
-    return { code, market: resolvedMarket, secid: symbol, klines, source: "tencent" };
-  } catch {
-    // 东财和新浪作为 K 线兜底，实时个股行情仍由腾讯 quote 接口提供。
-  }
-  const secid = `${resolvedMarket}.${code}`;
-  try {
-    const klines = await getKlines(secid, 120);
-    return { code, market: resolvedMarket, secid, klines, source: "eastmoney" };
-  } catch {
-    const klines = await getSinaKlines(symbol, 120);
-    return { code, market: resolvedMarket, secid, klines, source: "sina" };
-  }
-}
-
-async function getFallbackSectors(window) {
-  const allSymbols = curatedSectors.flatMap(([, , stocks]) => stocks.map(([symbol]) => symbol));
-  const quotes = await getTencentQuotes(allSymbols);
-  const sectors = await Promise.all(curatedSectors.map(async ([id, name, stocks]) => {
-    const stockQuotes = stocks.map(([symbol, stockName]) => ({ ...quotes.get(symbol), symbol, name: stockName })).filter((item) => Number.isFinite(item.price));
-    const pct = stockQuotes.reduce((sum, item) => sum + item.pct, 0) / Math.max(1, stockQuotes.length);
-    const amount = stockQuotes.reduce((sum, item) => sum + (item.amount || 0), 0);
-    const upCount = stockQuotes.filter((item) => item.pct > 0).length;
-    const downCount = stockQuotes.filter((item) => item.pct < 0).length;
-    let history = [];
-    try {
-      const samples = await Promise.all(stocks.slice(0, 4).map(([symbol]) => getSinaKlines(symbol, 32)));
-      const len = Math.min(...samples.map((rows) => rows.length));
-      history = Array.from({ length: Math.min(24, len) }, (_, i) => {
-        const rowsIndex = len - Math.min(24, len) + i;
-        return samples.reduce((sum, rows) => sum + rows[rowsIndex].close, 0) / samples.length;
-      });
-    } catch {
-      history = stockQuotes.map((item, index) => 1000 + item.pct * 10 + index);
-    }
-    const attackScore = trendScore(history.map((close) => ({ close, volume: 1 })), pct, 0, 0, window) + Math.min(12, upCount);
-    return {
-      id,
-      code: id,
-      name,
-      index: history.at(-1) || 1000 + pct * 10,
-      pct,
-      change: 0,
-      amount,
-      amplitude: 0,
-      turnover: 0,
-      mainNet: null,
-      upCount,
-      downCount,
-      flatCount: Math.max(0, stockQuotes.length - upCount - downCount),
-      attackScore: Math.max(5, Math.min(99, attackScore)),
-      history,
-      source: "tencent+sina"
-    };
-  }));
-  return sectors.sort((a, b) => b.attackScore - a.attackScore);
-}
-
-async function getFallbackStocks(board, window) {
-  const sector = curatedSectors.find(([id]) => id === board) || curatedSectors[0];
-  if (!sector) throw new Error("当前行情源无法加载该板块成分股");
-  const symbols = sector[2].map(([symbol]) => symbol);
-  const quotes = await getTencentQuotes(symbols);
-  const stocks = sector[2].map(([symbol, name]) => {
-    const quote = quotes.get(symbol) || {};
-    const code = symbol.slice(2);
-    const score = trendScore([], quote.pct, 0, quote.turnover, window);
-    return {
-      name,
-      code,
-      market: symbol.startsWith("sh") ? 1 : 0,
-      price: quote.price,
-      pct: quote.pct,
-      change: quote.change,
-      volume: quote.volume,
-      amount: quote.amount,
-      amplitude: Number.isFinite(quote.high) && quote.low ? ((quote.high - quote.low) / quote.prevClose) * 100 : 0,
-      turnover: quote.turnover,
-      mainFlow: null,
-      mainFlowPct: null,
-      score,
-      quoteSource: "tencent",
-      source: "tencent"
-    };
-  }).filter((item) => Number.isFinite(item.price));
-  return stocks.sort((a, b) => b.score - a.score).slice(0, 10);
-}
-
-function recommendationScore(stock) {
-  const sectorScore = Number(stock.sectorScore || 0);
-  const stockScore = Number(stock.score || 0);
-  const flow = Number(stock.mainFlow);
-  const flowPct = Number(stock.mainFlowPct);
-  const inSpeed = Number(stock.mainInSpeed);
-  const outSpeed = Number(stock.mainOutSpeed);
-  const pct = Number(stock.pct);
-  const flowScore = Number.isFinite(flow) ? Math.max(-18, Math.min(30, flow / 100_000_000 * 5)) : 0;
-  const flowPctScore = Number.isFinite(flowPct) ? Math.max(-12, Math.min(18, flowPct * 1.25)) : 0;
-  const speedScore = Number.isFinite(inSpeed) ? Math.max(0, Math.min(16, inSpeed * 1.4)) : 0;
-  const outPenalty = Number.isFinite(outSpeed) ? Math.max(0, Math.min(18, outSpeed * 1.6)) : 0;
-  const positionPenalty = pct > 6 ? (pct - 6) * 4 : pct < -2.5 ? Math.abs(pct + 2.5) * 4 : 0;
-  return sectorScore * 0.32 + stockScore * 0.38 + flowScore + flowPctScore + speedScore - outPenalty - positionPenalty;
-}
-
-function isOperableCandidate(stock) {
-  const pct = Number(stock.pct);
-  const flow = Number(stock.mainFlow);
-  const flowPct = Number(stock.mainFlowPct);
-  const inSpeed = Number(stock.mainInSpeed);
-  const outSpeed = Number(stock.mainOutSpeed);
-  if (!Number.isFinite(Number(stock.price)) || !Number.isFinite(pct)) return false;
-  if (pct < -3 || pct > 8.5) return false;
-  if (Number(stock.score || 0) < 42) return false;
-  const flowOk = Number.isFinite(flow) ? flow > 0 : true;
-  const ratioOk = Number.isFinite(flowPct) ? flowPct > 0 : true;
-  const speedOk = !Number.isFinite(inSpeed) || !Number.isFinite(outSpeed) || inSpeed >= outSpeed * 0.65;
-  return flowOk && ratioOk && speedOk;
-}
-
-function buildServerRecommendationReason(stock, advice) {
-  const flow = stock.mainFlow === null || stock.mainFlow === undefined ? "暂无主力净额" : `主力净额 ${moneyText(stock.mainFlow)}`;
-  const flowPct = stock.mainFlowPct === null || stock.mainFlowPct === undefined ? "" : `，主力占比 ${toFixedText(stock.mainFlowPct)}%`;
-  const speed = stock.mainInSpeed === null || stock.mainInSpeed === undefined ? "" : `，流入速度 ${toFixedText(stock.mainInSpeed)}%`;
-  return `${stock.sectorName} 板块雷达分 ${toFixedText(stock.sectorScore, 1)}，${flow}${flowPct}${speed}；个股进攻分 ${toFixedText(stock.score, 1)}，当前涨跌幅 ${toFixedText(stock.pct)}%，属于可跟踪但不宜盲目追高的位置。`;
-}
-
-function buildServerRecommendationAnalysis(stock, advice) {
-  const levels = advice.levels || {};
-  const parts = [
-    `方向：${stock.sectorName} 板块主力方向靠前，个股资金同步性 ${Number(stock.mainFlow || 0) > 0 ? "偏强" : "一般"}。`,
-    `买点：优先等回踩 ${toFixedText(levels.pullbackBuy)} 附近不破，或放量突破 ${toFixedText(levels.breakoutBuy)} 后分批，不建议单笔满仓追入。`,
-    `风控：计划止损 ${toFixedText(levels.stopLoss)}，若主力净流入转负或跌破该位置，本次建仓逻辑失效。`,
-    `目标：第一目标 ${toFixedText(levels.firstTarget)}，到位先锁定部分利润，再看板块持续性。`
-  ];
-  return parts;
-}
-
-function moneyText(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "--";
-  if (Math.abs(n) >= 100_000_000) return `${(n / 100_000_000).toFixed(2)}亿`;
-  if (Math.abs(n) >= 10_000) return `${(n / 10_000).toFixed(1)}万`;
-  return n.toFixed(0);
-}
-
-function toFixedText(value, digits = 2) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n.toFixed(digits) : "--";
-}
-
-async function refreshRecommendations({ force = false } = {}) {
-  if (recommendationCache.status === "running") return recommendationCache;
-  const fresh = recommendationCache.refreshedAt && Date.now() - Date.parse(recommendationCache.refreshedAt) < RECOMMEND_REFRESH_MS;
-  if (!force && fresh && recommendationCache.data.length) return recommendationCache;
-  recommendationCache.status = "running";
-  recommendationCache.error = "";
-  try {
-    const sectors = await getSectors(5);
-    const sectorStocksPairs = await Promise.all(sectors.map(async (sector) => {
-      try {
-        const stocks = await getStocks(sector.id, 5);
-        return stocks
-          .slice(0, 50)
-          .map((stock) => ({
-            ...stock,
-            sectorId: sector.id,
-            sectorName: sector.name,
-            sectorScore: sector.attackScore,
-            sectorMainNet: sector.mainNet,
-            sectorMainNetPct: sector.mainNetPct
-          }));
-      } catch {
-        return [];
-      }
-    }));
-    const ranked = sectorStocksPairs.flat()
-      .filter(isOperableCandidate)
-      .map((stock) => ({ ...stock, recScore: recommendationScore(stock) }))
-      .sort((a, b) => Number(b.recScore || 0) - Number(a.recScore || 0));
-    const unique = [];
-    const seen = new Set();
-    for (const stock of ranked) {
-      if (seen.has(stock.code)) continue;
-      seen.add(stock.code);
-      unique.push(stock);
-      if (unique.length >= 60) break;
-    }
-    const withAdvice = await Promise.all(unique.map(async (stock) => {
-      let candles = [];
-      try {
-        candles = (await getStockKline(stock.code, stock.market)).klines;
-      } catch {
-        candles = [];
-      }
-      const advised = { ...stock, candles };
-      const advice = stockAdviceForServer(advised);
-      const actionBoost = advice.action === "持有或小幅加仓" ? 8 : advice.action === "观察减仓" ? -7 : advice.action === "冲高减仓" ? -15 : 0;
-      const technical = technicalOpportunityScore(candles);
-      const buyOpportunityScore = Number(stock.recScore || 0) + actionBoost + technical.score;
-      return {
-        ...stock,
-        candles: [],
-        advice,
-        technicalScore: technical.score,
-        technicalSignals: {
-          macd: technical.macdLabel,
-          sar: technical.sarLabel,
-          details: technical.details
-        },
-        recScore: buyOpportunityScore,
-        buyOpportunityScore,
-        reason: buildServerRecommendationReason(stock, advice),
-        analysis: buildServerRecommendationAnalysis(stock, advice).concat([
-          `技术：${technical.macdLabel}，${technical.sarLabel}，对买入机会分贡献 ${technical.score >= 0 ? "+" : ""}${toFixedText(technical.score, 1)} 分。`
-        ])
-      };
-    }));
-    const data = withAdvice
-      .filter((stock) => !["冲高减仓", "观察减仓", "等待数据"].includes(stock.advice.action))
-      .sort((a, b) => Number(b.recScore || 0) - Number(a.recScore || 0))
-      .slice(0, 20);
-    const now = new Date();
-    recommendationCache.data = data;
-    recommendationCache.refreshedAt = now.toISOString();
-    recommendationCache.nextRefreshAt = new Date(now.getTime() + RECOMMEND_REFRESH_MS).toISOString();
-    recommendationCache.status = "ready";
-    return recommendationCache;
-  } catch (error) {
-    recommendationCache.status = "error";
-    recommendationCache.error = error.message;
-    recommendationCache.nextRefreshAt = new Date(Date.now() + 60_000).toISOString();
-    return recommendationCache;
-  }
-}
-
-async function ensureStartupMarketSnapshot() {
-  const existing = readMarketSnapshot();
-  if (existing.indices?.length && existing.sectors?.length) {
-    console.log(`市场快照已存在: ${existing.updatedAt || "unknown"}`);
-    return existing;
-  }
-  console.log("首次启动市场快照不存在，开始拉取最新行情并持久化");
-  const snapshot = {
-    indices: [],
-    sectors: [],
-    stocksByBoard: {},
-    klinesByCode: {},
-    quotesByCode: {}
-  };
-  try {
-    snapshot.indices = await getIndices();
-  } catch (error) {
-    console.warn(`预热大盘指数失败: ${error.message}`);
-  }
-  try {
-    snapshot.sectors = await getSectors(5);
-  } catch (error) {
-    console.warn(`预热板块行情失败: ${error.message}`);
-  }
-  for (const sector of snapshot.sectors.slice(0, 6)) {
-    try {
-      snapshot.stocksByBoard[sector.id] = await getStocks(sector.id, 5);
-    } catch (error) {
-      console.warn(`预热 ${sector.name || sector.id} 成分股失败: ${error.message}`);
-    }
-  }
-  const sampleStocks = Object.values(snapshot.stocksByBoard)
-    .flat()
-    .slice(0, 12);
-  for (const stock of sampleStocks) {
-    if (!stock?.code) continue;
-    try {
-      snapshot.quotesByCode[stock.code] = await getQuote(stock.code, stock.market);
-    } catch {
-      snapshot.quotesByCode[stock.code] = stock;
-    }
-    try {
-      snapshot.klinesByCode[stock.code] = await getStockKline(stock.code, stock.market);
-    } catch (error) {
-      console.warn(`预热 ${stock.name || stock.code} K线失败: ${error.message}`);
-    }
-  }
-  writeMarketSnapshot(snapshot);
-  console.log(`市场快照已写入: 指数 ${snapshot.indices.length} 个，板块 ${snapshot.sectors.length} 个，股票池 ${Object.values(snapshot.stocksByBoard).flat().length} 只`);
-  return snapshot;
-}
-
-async function handleApi(req, res) {
-  const url = new URL(req.url, `http://${HOST}:${PORT}`);
-  const readBody = async () => {
-    const chunks = [];
-    let size = 0;
-    for await (const chunk of req) {
-      size += chunk.length;
-      if (size > 12_000_000) throw new Error("请求内容过大");
-      chunks.push(chunk);
-    }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
-  };
-  try {
-    if (url.pathname === "/api/settings" && req.method === "GET") {
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data: publicSettings(), updatedAt: new Date().toISOString() }));
-      return;
-    }
-    if (url.pathname === "/api/settings" && req.method === "POST") {
-      const body = await readBody();
-      const current = readAppSettings();
-      const settings = writeAppSettings({
-        kimiApiUrl: body.kimiApiUrl,
-        kimiModel: body.kimiModel,
-        kimiVisionModel: body.kimiVisionModel,
-        advisorModel: body.advisorModel,
-        advisorRole: body.advisorRole,
-        advisorStyle: body.advisorStyle,
-        marketDataSource: body.marketDataSource,
-        kimiApiKey: String(body.kimiApiKey || "").trim() ? body.kimiApiKey : "__KEEP__",
-        useCache: body.useCache
-      });
-      if (current.useCache && !settings.useCache) {
-        cache.clear();
-      } else if (!current.useCache && settings.useCache) {
-        loadPersistentCache();
-      }
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data: publicSettings(settings), updatedAt: new Date().toISOString() }));
-      return;
-    }
-    if (url.pathname === "/api/advisor-chat" && req.method === "POST") {
-      const body = await readBody();
-      try {
-        const data = await advisorChat(body.messages || [], body.contexts || body.context || []);
-        res.writeHead(200, jsonHeaders);
-        res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
-      } catch (error) {
-        const log = error.advisorLog || {
-          requestId: makeRequestId("advisor"),
-          stage: "api-handler",
-          message: error.message,
-          stack: redactLogText(error.stack || "")
-        };
-        console.error("[advisor-chat-failed]", JSON.stringify(log));
-        res.writeHead(200, jsonHeaders);
-        res.end(JSON.stringify({ ok: false, error: error.message, log, updatedAt: new Date().toISOString() }));
-      }
-      return;
-    }
-    if (url.pathname === "/api/holdings" && req.method === "GET") {
-      const store = readHoldingsStore();
-      const data = await analyzeHoldings(store.holdings, { parser: store.holdings.length ? "saved+kimi" : "saved", withNews: true });
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data: { ...data, savedAt: store.updatedAt }, updatedAt: new Date().toISOString() }));
-      return;
-    }
-    if (url.pathname === "/api/holdings/import-image" && req.method === "POST") {
-      const body = await readBody();
-      const parsed = await parseHoldingsImageWithKimi(body.imageData || "");
-      const enriched = await enrichParsedHoldings(parsed);
-      const store = writeHoldingsStore(enriched);
-      const data = await analyzeHoldings(store.holdings, { parser: "kimi-ocr", withNews: true });
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data: { ...data, savedAt: store.updatedAt }, updatedAt: new Date().toISOString() }));
-      return;
-    }
-    if (url.pathname === "/api/holdings/import-text" && req.method === "POST") {
-      const body = await readBody();
-      const parsed = await parsePortfolioHoldings(body.text || "");
-      const store = writeHoldingsStore(parsed);
-      const data = await analyzeHoldings(store.holdings, { parser: hasAiKey() ? "kimi+rules" : "rules", withNews: true });
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data: { ...data, savedAt: store.updatedAt }, updatedAt: new Date().toISOString() }));
-      return;
-    }
-    if (url.pathname === "/api/holdings" && req.method === "DELETE") {
-      const store = writeHoldingsStore([]);
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data: { rows: [], summary: null, parser: "saved", savedAt: store.updatedAt }, updatedAt: new Date().toISOString() }));
-      return;
-    }
-    if (url.pathname === "/api/portfolio/analyze" && req.method === "POST") {
-      const body = await readBody();
-      const data = await analyzePortfolio(body.text || "");
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
-      return;
-    }
-    if (url.pathname === "/api/news") {
-      const code = url.searchParams.get("code");
-      const name = url.searchParams.get("name");
-      if (!code) throw new Error("缺少 code 参数");
-      const data = await getStockNews(code, name, 10);
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
-      return;
-    }
-    if (url.pathname === "/api/recommendations") {
-      const force = url.searchParams.get("force") === "1";
-      const cache = await refreshRecommendations({ force });
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({
-        ok: true,
-        data: cache.data,
-        status: cache.status,
-        error: cache.error,
-        refreshedAt: cache.refreshedAt,
-        nextRefreshAt: cache.nextRefreshAt,
-        updatedAt: cache.refreshedAt || new Date().toISOString()
-      }));
-      return;
-    }
-    if (url.pathname === "/api/sector-news") {
-      const names = (url.searchParams.get("names") || "")
-        .split(",")
-        .map((item) => decodeURIComponent(item).trim())
-        .filter(Boolean);
-      if (!names.length) throw new Error("缺少 names 参数");
-      const data = await getSectorNewsBatch(names);
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
-      return;
-    }
-    if (url.pathname === "/api/quote") {
-      const code = url.searchParams.get("code");
-      if (!code) throw new Error("缺少 code 参数");
-      let data;
-      try {
-        data = await getQuote(code, Number(url.searchParams.get("market") || marketOf(code)));
-        updateMarketSnapshot("quote", code, data);
-      } catch (error) {
-        data = snapshotFallback("quote", code);
-        if (!data) throw error;
-        data = { ...data, snapshotFallback: true };
-      }
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
-      return;
-    }
-    if (url.pathname === "/api/sectors") {
-      let data;
-      try {
-        data = await getSectors(Number(url.searchParams.get("window") || 5));
-        updateMarketSnapshot("sectors", "", data);
-      } catch (error) {
-        data = snapshotFallback("sectors");
-        if (!data) throw error;
-        data = data.map((item) => ({ ...item, snapshotFallback: true }));
-      }
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
-      return;
-    }
-    if (url.pathname === "/api/indices") {
-      let data;
-      try {
-        data = await getIndices();
-        updateMarketSnapshot("indices", "", data);
-      } catch (error) {
-        data = snapshotFallback("indices");
-        if (!data) throw error;
-        data = data.map((item) => ({ ...item, snapshotFallback: true }));
-      }
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
-      return;
-    }
-    if (url.pathname === "/api/index-kline") {
-      const symbol = url.searchParams.get("symbol");
-      if (!symbol) throw new Error("缺少 symbol 参数");
-      const data = await getIndexKline(symbol);
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
-      return;
-    }
-    if (url.pathname === "/api/stocks") {
-      const board = url.searchParams.get("board");
-      if (!board) throw new Error("缺少 board 参数");
-      let data;
-      try {
-        data = await getStocks(board, Number(url.searchParams.get("window") || 5));
-        updateMarketSnapshot("stocks", board, data);
-      } catch (error) {
-        data = snapshotFallback("stocks", board);
-        if (!data) throw error;
-        data = data.map((item) => ({ ...item, snapshotFallback: true }));
-      }
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
-      return;
-    }
-    if (url.pathname === "/api/kline") {
-      const code = url.searchParams.get("code");
-      if (!code) throw new Error("缺少 code 参数");
-      let data;
-      try {
-        data = await getStockKline(code, Number(url.searchParams.get("market") || marketOf(code)));
-        updateMarketSnapshot("kline", code, data);
-      } catch (error) {
-        data = snapshotFallback("kline", code);
-        if (!data) throw error;
-        data = { ...data, snapshotFallback: true };
-      }
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ ok: true, data, updatedAt: new Date().toISOString() }));
-      return;
-    }
-    res.writeHead(404, jsonHeaders);
-    res.end(JSON.stringify({ ok: false, error: "API 不存在" }));
-  } catch (error) {
-    res.writeHead(502, jsonHeaders);
-    res.end(JSON.stringify({ ok: false, error: error.message, updatedAt: new Date().toISOString() }));
-  }
-}
+const handleApi = createApiRouter({
+  HOST,
+  PORT,
+  publicSettings,
+  readAppSettings,
+  writeAppSettings,
+  clearRuntimeCache,
+  loadPersistentCache,
+  advisorChat,
+  makeRequestId,
+  redactLogText,
+  readHoldingsStore,
+  writeHoldingsStore,
+  analyzeHoldings,
+  parseHoldingsImageWithKimi,
+  enrichParsedHoldings,
+  parsePortfolioHoldings,
+  hasAiKey,
+  analyzePortfolio,
+  getStockNews,
+  refreshRecommendations,
+  getSectorNewsBatch,
+  getQuote,
+  marketOf,
+  updateMarketSnapshot,
+  snapshotFallback,
+  getSectors,
+  getIndices,
+  getIndexKline,
+  getStocks,
+  getStockKline
+});
 
 function handleStatic(req, res) {
   let pathname = decodeURIComponent(req.url.split("?")[0]);
@@ -3410,18 +1494,9 @@ http.createServer((req, res) => {
   ensureStartupMarketSnapshot().catch((error) => {
     console.warn(`市场快照预热失败: ${error.message}`);
   });
-  if (isAshareTradingAutoRefreshTime()) {
-    refreshRecommendations({ force: true }).then((cache) => {
-      console.log(`股票推荐池已生成: ${cache.data.length} 只`);
-    });
-  } else {
-    console.log("当前非 A 股交易时段，跳过股票推荐池自动生成");
-  }
-});
-
-setInterval(() => {
-  if (!isAshareTradingAutoRefreshTime()) return;
-  refreshRecommendations({ force: true }).then((cache) => {
-    console.log(`股票推荐池已刷新: ${cache.data.length} 只`);
+  startRecommendationRefreshJob({
+    isAshareTradingAutoRefreshTime,
+    refreshRecommendations,
+    refreshMs: RECOMMEND_REFRESH_MS
   });
-}, RECOMMEND_REFRESH_MS);
+});

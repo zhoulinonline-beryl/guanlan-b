@@ -34,18 +34,18 @@
 
 - **我的持股**
   - 支持上传持股截图。
-  - 使用 Kimi 视觉模型识别股票名称、成本价、持有数量。
+  - 使用已配置的视觉模型识别股票名称、成本价、持有数量。
   - 基于当前最新价、成本价和持有数量分析盈亏、仓位、做 T 档位和风险。
 
 - **个股讨论**
-  - 使用 Kimi 2.5 作为观澜理财师。
+  - 支持使用 Kimi、DeepSeek、MiniMax、GLM 作为观澜理财师。
   - 可讨论股票、板块、持仓、做 T、新闻政策和建仓计划。
   - 自动调用应用内行情、板块、推荐池、持仓、K 线、新闻等上下文。
   - 当模型反问时，支持多选快捷回复。
   - 调用失败时返回完整失败日志，便于排查 AK、网络、模型或接口问题。
 
 - **设置**
-  - 支持配置 Kimi API 地址、文本模型、视觉模型、观澜理财师模型。
+  - 支持配置模型供应商、API 地址、文本模型、视觉模型、观澜理财师模型。
   - 支持配置观澜理财师角色与回复风格。
   - 支持手动切换行情数据源：自动兜底、腾讯、东方财富、新浪/搜狐。
   - 支持持久化缓存策略，历史行情、新闻政策和分析结果可优先从缓存读取。
@@ -56,13 +56,21 @@
 
 - 腾讯行情接口：个股实时行情。
 - 东方财富接口：板块资金、指数、K 线等。
-- Kimi/Moonshot：新闻政策搜索与总结、持仓截图 OCR、个股讨论。
+- Kimi/Moonshot、DeepSeek、MiniMax、GLM：新闻政策总结、持仓文本解析、个股讨论。
+- OCR：Kimi 使用 `kimi-k2.6` 视觉能力；DeepSeek 预留 `deepseek-ocr`；MiniMax 使用 `MiniMax-VL-01`；GLM 使用专用 `glm-ocr` layout parsing 接口。
 
 默认模型：
 
-- 文本/联网分析模型：`moonshot-v1-auto`
-- 视觉识别模型：`moonshot-v1-8k-vision-preview`
-- 观澜理财师：`kimi-k2.5`
+- 默认供应商：`kimi`
+- 文本/联网分析模型：`kimi-k2.6`
+- 视觉识别模型：`kimi-k2.6`
+- 观澜理财师：`kimi-k2.6`
+
+其它供应商默认模型：
+
+- DeepSeek：`deepseek-v4-flash`，OCR 预设 `deepseek-ocr`
+- MiniMax：`MiniMax-M3`，OCR 预设 `MiniMax-VL-01`
+- GLM：`glm-5.1`，OCR 预设 `glm-ocr`
 
 ## 项目结构
 
@@ -117,8 +125,9 @@ chmod +x install-macos.sh
 
 安装脚本会引导你输入：
 
-- Kimi AK
-- Kimi API 地址
+- 模型供应商：`kimi` / `deepseek` / `minimax` / `glm`
+- 对应供应商 AK（安装时为可见输入，会直接显示在终端；请避免在共享屏幕或公共终端中输入）
+- 对应供应商 API 地址、文本模型、视觉模型、理财师模型
 - 行情数据源：`auto` / `tencent` / `eastmoney` / `sina`
 - 是否启用缓存
 - 是否创建 macOS LaunchAgent 开机自启
@@ -149,20 +158,120 @@ node server.js
 
 ## 阿里云 ECS 部署
 
-项目内置 ECS 部署脚本：
+项目内置 ECS 部署脚本，逻辑与 macOS 安装脚本保持一致，会引导你选择模型供应商、输入对应 AK、选择行情源和缓存策略，然后自动安装 Node.js、Nginx，创建 systemd 服务并配置反向代理。
 
 ```bash
 sudo bash deploy-aliyun-ecs.sh
 ```
 
-部署脚本会安装 Node.js、Nginx，创建 systemd 服务，并配置反向代理。
+### ECS 购买建议
 
-建议配置：
+个人或小团队使用：
 
-- 2 vCPU / 4 GB 内存起步。
-- 系统盘 40 GB。
-- Ubuntu 22.04 或 Alibaba Cloud Linux 3。
-- 安全组开放 80、443、22。
+- 实例规格：2 vCPU / 4 GB 内存起步。
+- 系统盘：ESSD 40 GB 起步。
+- 带宽：按固定带宽 3-5 Mbps 起步，或按流量计费。
+- 系统：Ubuntu 22.04 LTS、Ubuntu 24.04 LTS 或 Alibaba Cloud Linux 3。
+- 地域：尽量选择离主要使用者近的地域；如使用大陆地域和域名访问，需要 ICP 备案。
+
+更稳妥的生产配置：
+
+- 实例规格：2 vCPU / 8 GB 内存。
+- 系统盘：ESSD 80 GB。
+- 带宽：5 Mbps 或更高。
+- 适合：多人同时使用、频繁 OCR、新闻/模型调用较多。
+
+### 安全组建议
+
+至少开放：
+
+- `22`：SSH，建议只允许你的固定 IP。
+- `80`：HTTP 访问。
+- `443`：HTTPS 访问，后续配置证书时使用。
+
+不要开放：
+
+- `5173`：Node 服务只监听 `127.0.0.1`，由 Nginx 反向代理即可。
+- 数据库端口：当前应用不需要外部数据库。
+
+### 部署步骤
+
+1. 登录 ECS。
+
+```bash
+ssh root@你的服务器公网IP
+```
+
+2. 上传或拉取代码到服务器。
+
+```bash
+git clone https://gitlab.com/kawa-group/GuanlanRadar.git /root/GuanlanRadar
+cd /root/GuanlanRadar
+```
+
+如果使用压缩包上传，也可以解压后进入项目根目录。
+
+3. 执行部署脚本。
+
+```bash
+sudo bash deploy-aliyun-ecs.sh
+```
+
+脚本会引导你输入：
+
+- 模型供应商：`kimi` / `deepseek` / `minimax` / `glm`
+- 对应供应商 AK
+- API 地址、OCR 地址、文本模型、OCR 模型、理财师模型
+- 行情数据源：`auto` / `tencent` / `eastmoney` / `sina`
+- 是否启用缓存
+
+4. 访问服务。
+
+如果未绑定域名：
+
+```text
+http://服务器公网IP/
+```
+
+如果已设置 `DOMAIN`：
+
+```bash
+DOMAIN=radar.example.com sudo bash deploy-aliyun-ecs.sh
+```
+
+访问：
+
+```text
+http://radar.example.com/
+```
+
+### ECS 常用运维命令
+
+```bash
+# 查看服务状态
+systemctl status guanlan-stock-radar
+
+# 查看应用日志
+journalctl -u guanlan-stock-radar -f
+
+# 重启应用
+systemctl restart guanlan-stock-radar
+
+# 检查 Nginx
+nginx -t
+systemctl reload nginx
+
+# 查看部署目录
+cd /opt/guanlan-stock-radar
+```
+
+### HTTPS 建议
+
+正式使用建议配置 HTTPS。可以在阿里云申请免费证书，或使用 `certbot` 配置 Let's Encrypt。配置 HTTPS 前请确认：
+
+- 域名已解析到 ECS 公网 IP。
+- 大陆地域域名已完成 ICP 备案。
+- 安全组已开放 `443`。
 
 如使用大陆地域和域名访问，请先完成 ICP 备案。
 
@@ -199,13 +308,17 @@ data/settings.example.json
 
 ```bash
 PORT=5173
-KIMI_API_KEY=sk-xxx
-KIMI_API_URL=https://api.moonshot.ai/v1/chat/completions
-KIMI_MODEL=moonshot-v1-auto
-KIMI_VISION_MODEL=moonshot-v1-8k-vision-preview
-ADVISOR_MODEL=kimi-k2.5
+AI_PROVIDER=kimi
+AI_API_KEY=sk-xxx
+AI_API_URL=https://api.moonshot.ai/v1/chat/completions
+AI_OCR_API_URL=
+AI_TEXT_MODEL=kimi-k2.6
+AI_VISION_MODEL=kimi-k2.6
+ADVISOR_MODEL=kimi-k2.6
 NODE_ENV=production
 ```
+
+说明：`install-macos.sh` 中输入模型 AK 时不会隐藏字符，便于确认是否粘贴完整；脚本会把 AK 写入 `.env.local` 和 `data/settings.json`，并设置为仅当前用户可读写。
 
 ## 缓存策略
 
@@ -213,7 +326,7 @@ NODE_ENV=production
 
 启用缓存后：
 
-- 历史行情、新闻政策、Kimi 分析结果会写入 `data/cache.json`。
+- 历史行情、新闻政策、AI 分析结果会写入 `data/cache.json`。
 - 重复查询会优先读取缓存，减少等待和模型调用成本。
 
 关闭缓存后：
@@ -265,9 +378,9 @@ NODE_ENV=production
 
 常见原因：
 
-- Kimi AK 未配置或失效。
-- Kimi API 地址和 AK 平台不匹配。
-- 本机网络无法访问 Moonshot/Kimi。
+- 当前模型供应商 AK 未配置或失效。
+- API 地址和 AK 平台不匹配。
+- 本机网络无法访问对应模型供应商。
 - 模型名不支持当前 API 地址。
 - 请求上下文过大导致接口拒绝。
 
