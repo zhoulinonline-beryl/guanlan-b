@@ -798,6 +798,7 @@ async function saveSettings() {
         advisorModel: draft.advisorModel,
         advisorRole: draft.advisorRole,
         advisorStyle: draft.advisorStyle,
+        marketDataSource: draft.marketDataSource,
         kimiApiKey: draft.kimiApiKey || "",
         useCache: draft.useCache
       })
@@ -1834,6 +1835,12 @@ function settingsPage() {
   const modelOptions = ["moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"];
   const advisorOptions = ["kimi-k2.5", "moonshot-v1-auto", "moonshot-v1-32k", "moonshot-v1-128k"];
   const visionOptions = ["moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview"];
+  const marketSourceOptions = [
+    ["auto", "自动兜底（推荐）", "腾讯、东方财富、新浪/搜狐按接口类型自动选择，失败后继续尝试其它源。"],
+    ["tencent", "优先腾讯行情", "个股报价和 K 线优先使用腾讯，失败后自动兜底。"],
+    ["eastmoney", "优先东方财富", "板块资金、成分股、K 线优先使用东方财富，失败后自动兜底。"],
+    ["sina", "优先新浪/搜狐", "报价和 K 线优先新浪，板块优先搜狐，失败后自动兜底。"]
+  ];
   if (state.settingsLoading && !state.settings) return loadingView();
   return `
     <section class="settings-layout">
@@ -1864,6 +1871,20 @@ function settingsPage() {
           <label class="setting-card">
             <span><strong>Kimi AK</strong><small>留空保存时保留原 AK；输入新 AK 后会覆盖本地设置。</small></span>
             <input type="password" data-setting="kimiApiKey" value="${escapeHtml(draft.kimiApiKey || "")}" placeholder="${draft.hasKimiApiKey ? `已保存 ${draft.kimiApiKeyMasked}` : "请输入 Moonshot/Kimi API Key"}" autocomplete="off" />
+          </label>
+        </section>
+        <section class="settings-section">
+          <div class="section-head first-section">
+            <div>
+              <h2>行情数据源</h2>
+              <span class="hint">手动选择后会作为优先数据源；若失败，服务端仍会继续尝试其它 A 股数据源。</span>
+            </div>
+          </div>
+          <label class="setting-card">
+            <span><strong>优先数据源</strong><small>${marketSourceOptions.find(([key]) => key === (draft.marketDataSource || "auto"))?.[2] || marketSourceOptions[0][2]}</small></span>
+            <select data-setting="marketDataSource">
+              ${marketSourceOptions.map(([key, label]) => `<option value="${key}" ${(draft.marketDataSource || "auto") === key ? "selected" : ""}>${label}</option>`).join("")}
+            </select>
           </label>
         </section>
         <section class="settings-section">
@@ -1907,6 +1928,7 @@ function settingsPage() {
           <div class="settings-status">
             <span>AK 状态：${draft.hasKimiApiKey ? "已配置" : "未配置"}</span>
             <span>缓存：${draft.useCache !== false ? "开启" : "关闭"}</span>
+            <span>行情源：${marketSourceOptions.find(([key]) => key === (draft.marketDataSource || "auto"))?.[1] || "自动兜底"}</span>
           </div>
           <div class="controls">
             <button class="primary" data-action="save-settings" ${state.settingsSaving ? "disabled" : ""}>${state.settingsSaving ? "应用中..." : "保存并应用"}</button>
