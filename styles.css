@@ -2354,62 +2354,110 @@ button {
 
 .settings-layout {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   align-items: start;
-  max-width: 880px;
+  width: 100%;
+  max-width: 960px;
+  min-width: 0;
 }
 
 .settings-panel {
   display: grid;
-  gap: 16px;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #09131c;
+  padding: 10px;
+}
+
+.settings-summary span {
+  border: 1px solid rgba(84, 163, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(84, 163, 255, 0.08);
+  color: #dce8ef;
+  padding: 5px 9px;
+  font-size: 12px;
 }
 
 .settings-section {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(9, 19, 28, 0.72);
-  padding: 14px;
+  padding: 12px;
   display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.setting-card {
-  display: grid;
-  gap: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #09131c;
-  padding: 14px;
+.settings-section-title h2 {
+  margin: 0;
+  font-size: 16px;
 }
 
-.setting-card span {
-  display: grid;
-  gap: 5px;
-}
-
-.setting-card strong {
-  font-size: 15px;
-}
-
-.setting-card small {
+.settings-section-title span {
   color: var(--muted);
   font-size: 12px;
-  line-height: 1.5;
 }
 
-.setting-card input,
-.setting-card select,
-.setting-card textarea {
+.setting-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+  padding: 9px 0;
+}
+
+.setting-row:last-child {
+  border-bottom: 0;
+}
+
+.setting-row span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.setting-row strong {
+  font-size: 13px;
+}
+
+.setting-row small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.setting-row input,
+.setting-row select,
+.setting-row textarea {
   width: 100%;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #071018;
   color: var(--ink);
-  padding: 10px 11px;
-  min-height: 40px;
+  padding: 9px 10px;
+  min-height: 38px;
 }
 
-.setting-card textarea {
+.setting-row textarea {
   resize: vertical;
   line-height: 1.55;
 }
@@ -2427,7 +2475,7 @@ button {
 }
 
 .toggle-row strong {
-  font-size: 15px;
+  font-size: 13px;
 }
 
 .toggle-row small {
@@ -2443,28 +2491,13 @@ button {
   accent-color: var(--blue);
 }
 
-.settings-status {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 .settings-actions {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #09131c;
-  padding: 14px;
-  display: grid;
-  gap: 12px;
-}
-
-.settings-status span {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.035);
-  color: #c8d5de;
-  padding: 6px 8px;
-  font-size: 12px;
+  padding: 12px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .discussion-layout {
@@ -2983,7 +3016,6 @@ canvas {
   .broker-quote,
   .portfolio-hero,
   .portfolio-layout,
-  .settings-layout,
   .portfolio-t-levels,
   .advice-grid,
   .stock-data-grid,
@@ -3161,6 +3193,30 @@ canvas {
   .quote-strip,
   .index-days {
     grid-template-columns: 1fr;
+  }
+
+  .settings-summary {
+    align-items: stretch;
+  }
+
+  .settings-summary span {
+    flex: 1 1 120px;
+    text-align: center;
+  }
+
+  .setting-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .settings-actions .primary {
+    width: 100%;
+  }
+
+  .settings-section-title {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
   }
 
   .recommend-card-head {
