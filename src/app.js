@@ -665,10 +665,10 @@ function fileToDataUrl(file) {
 }
 
 async function recognizePositionImage(file) {
-  update({ ocrLoading: true, portfolioLoading: true, portfolioRows: [], portfolioSummary: null, portfolioParser: "", ocrProgress: "正在上传图片给 Kimi 识别..." });
+  update({ ocrLoading: true, portfolioLoading: true, portfolioRows: [], portfolioSummary: null, portfolioParser: "", ocrProgress: "正在上传图片给 AI 模型识别..." });
   try {
     const imageData = await fileToDataUrl(file);
-    update({ ocrProgress: "图片已读取，Kimi 正在识别名称、成本价和持有数量..." });
+    update({ ocrProgress: "图片已读取，AI 模型正在识别名称、成本价和持有数量..." });
     const res = await fetch("/api/holdings/import-image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -676,7 +676,7 @@ async function recognizePositionImage(file) {
     });
     update({ ocrProgress: "识别完成，正在保存持股并刷新操作建议..." });
     const json = await res.json();
-    if (!json.ok) throw new Error(json.error || "Kimi 识别失败");
+    if (!json.ok) throw new Error(json.error || "AI 识别失败");
     applyPortfolioPayload(json.data, json.updatedAt, "Kimi 已更新并保存我的持股");
     setTimeout(() => {
       if (!state.ocrLoading && state.modalPortfolioUpdate) update({ modalPortfolioUpdate: false });
@@ -778,7 +778,7 @@ async function loadSettings() {
   update({ settingsLoading: true, error: "" });
   try {
     const json = await api("/api/settings");
-    update({ settings: json.data, settingsDraft: { ...json.data, kimiApiKey: "" }, settingsLoading: false, updatedAt: json.updatedAt || state.updatedAt });
+    update({ settings: json.data, settingsDraft: { ...json.data, apiKey: "", kimiApiKey: "" }, settingsLoading: false, updatedAt: json.updatedAt || state.updatedAt });
   } catch (error) {
     update({ settingsLoading: false, error: error.message });
   }
@@ -792,6 +792,11 @@ async function saveSettings() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        aiProvider: draft.aiProvider,
+        apiUrl: draft.apiUrl,
+        ocrApiUrl: draft.ocrApiUrl,
+        textModel: draft.textModel,
+        visionModel: draft.visionModel,
         kimiApiUrl: draft.kimiApiUrl,
         kimiModel: draft.kimiModel,
         kimiVisionModel: draft.kimiVisionModel,
@@ -799,13 +804,13 @@ async function saveSettings() {
         advisorRole: draft.advisorRole,
         advisorStyle: draft.advisorStyle,
         marketDataSource: draft.marketDataSource,
-        kimiApiKey: draft.kimiApiKey || "",
+        apiKey: draft.apiKey || draft.kimiApiKey || "",
         useCache: draft.useCache
       })
     });
     const json = await res.json();
     if (!json.ok) throw new Error(json.error || "保存设置失败");
-    update({ settings: json.data, settingsDraft: { ...json.data, kimiApiKey: "" }, settingsSaving: false, updatedAt: json.updatedAt || state.updatedAt });
+    update({ settings: json.data, settingsDraft: { ...json.data, apiKey: "", kimiApiKey: "" }, settingsSaving: false, updatedAt: json.updatedAt || state.updatedAt });
     showToast("设置已保存");
   } catch (error) {
     update({ settingsSaving: false, error: error.message });
@@ -1593,7 +1598,7 @@ function discussionPage() {
         <div class="discussion-head">
           <div>
             <h2>观澜理财师</h2>
-            <span>默认 Kimi 2.5 · 偏激进 · 简约直接</span>
+            <span>${state.settings?.aiProviderLabel || "多模型"} · 偏激进 · 简约直接</span>
           </div>
           <button class="ghost" data-action="clear-advisor-chat">清空对话</button>
         </div>
@@ -1832,9 +1837,24 @@ function renderMarkdown(text = "") {
 
 function settingsPage() {
   const draft = state.settingsDraft || state.settings || {};
-  const modelOptions = ["moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"];
-  const advisorOptions = ["kimi-k2.5", "moonshot-v1-auto", "moonshot-v1-32k", "moonshot-v1-128k"];
-  const visionOptions = ["moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview"];
+  const providers = draft.aiProviders || state.settings?.aiProviders || {};
+  const provider = draft.aiProvider || "kimi";
+  const providerInfo = providers[provider] || {};
+  const providerOptions = Object.entries(providers).length ? Object.entries(providers) : [
+    ["kimi", { label: "Kimi / Moonshot" }],
+    ["deepseek", { label: "DeepSeek" }],
+    ["minimax", { label: "MiniMax" }],
+    ["glm", { label: "GLM / 智谱" }]
+  ];
+  const modelPresets = {
+    kimi: ["kimi-k2.6", "kimi-k2.5", "moonshot-v1-auto", "moonshot-v1-32k", "moonshot-v1-128k"],
+    deepseek: ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
+    minimax: ["MiniMax-M3", "MiniMax-M2.5", "MiniMax-M2", "MiniMax-M1"],
+    glm: ["glm-5.1", "glm-4.6", "glm-4.5", "glm-4-air", "glm-4v-plus"]
+  };
+  const modelOptions = [...new Set([draft.textModel, providerInfo.textModel, ...(modelPresets[provider] || [])].filter(Boolean))];
+  const advisorOptions = [...new Set([draft.advisorModel, providerInfo.advisorModel, ...(modelPresets[provider] || [])].filter(Boolean))];
+  const visionOptions = [...new Set([draft.visionModel, providerInfo.visionModel, ...(provider === "kimi" ? ["kimi-k2.6", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview"] : provider === "deepseek" ? ["deepseek-ocr"] : provider === "minimax" ? ["MiniMax-VL-01"] : provider === "glm" ? ["glm-ocr", "GLM-5V-Turbo", "glm-4v-plus"] : [])].filter(Boolean))];
   const marketSourceOptions = [
     ["auto", "自动兜底（推荐）", "腾讯、东方财富、新浪/搜狐按接口类型自动选择，失败后继续尝试其它源。"],
     ["tencent", "优先腾讯行情", "个股报价和 K 线优先使用腾讯，失败后自动兜底。"],
@@ -1846,34 +1866,40 @@ function settingsPage() {
     <section class="settings-layout">
       <div class="panel settings-panel">
         <div class="settings-summary">
-          <span>AK ${draft.hasKimiApiKey ? "已配置" : "未配置"}</span>
+          <span>${draft.aiProviderLabel || providerInfo.label || "模型"} · AK ${draft.hasApiKey || draft.hasKimiApiKey ? "已配置" : "未配置"}</span>
           <span>行情源 ${marketSourceOptions.find(([key]) => key === (draft.marketDataSource || "auto"))?.[1] || "自动兜底"}</span>
           <span>缓存 ${draft.useCache !== false ? "开启" : "关闭"}</span>
         </div>
         <section class="settings-section">
           <div class="settings-section-title">
             <h2>调用模型</h2>
-            <span>设置 Kimi/Moonshot 模型与 API。</span>
+            <span>选择 Kimi、DeepSeek、MiniMax 或 GLM，并填写对应 AK。</span>
           </div>
           <label class="setting-row">
-            <span><strong>文本模型</strong><small>新闻、推荐、持股分析</small></span>
-            <select data-setting="kimiModel">
-              ${modelOptions.map((item) => `<option value="${item}" ${draft.kimiModel === item ? "selected" : ""}>${item}</option>`).join("")}
+            <span><strong>模型供应商</strong><small>保存后立即切换底层调用</small></span>
+            <select data-setting="aiProvider">
+              ${providerOptions.map(([key, item]) => `<option value="${key}" ${provider === key ? "selected" : ""}>${item.label || key}</option>`).join("")}
             </select>
           </label>
           <label class="setting-row">
-            <span><strong>OCR 模型</strong><small>识别持股截图</small></span>
-            <select data-setting="kimiVisionModel">
-              ${visionOptions.map((item) => `<option value="${item}" ${draft.kimiVisionModel === item ? "selected" : ""}>${item}</option>`).join("")}
+            <span><strong>文本模型</strong><small>新闻、推荐、持股分析</small></span>
+            <select data-setting="textModel">
+              ${modelOptions.map((item) => `<option value="${item}" ${(draft.textModel || providerInfo.textModel) === item ? "selected" : ""}>${item}</option>`).join("")}
+            </select>
+          </label>
+          <label class="setting-row">
+            <span><strong>OCR 模型</strong><small>${providerInfo.supportsVision === false ? "当前供应商未默认启用视觉能力" : "识别持股截图"}</small></span>
+            <select data-setting="visionModel">
+              ${visionOptions.length ? visionOptions.map((item) => `<option value="${item}" ${(draft.visionModel || providerInfo.visionModel) === item ? "selected" : ""}>${item}</option>`).join("") : `<option value="">不启用 OCR 模型</option>`}
             </select>
           </label>
           <label class="setting-row">
             <span><strong>API 地址</strong><small>Chat Completions</small></span>
-            <input data-setting="kimiApiUrl" value="${escapeHtml(draft.kimiApiUrl || "")}" placeholder="https://api.moonshot.cn/v1/chat/completions" />
+            <input data-setting="apiUrl" value="${escapeHtml(draft.apiUrl || providerInfo.apiUrl || "")}" placeholder="${escapeHtml(providerInfo.apiUrl || "https://.../chat/completions")}" />
           </label>
           <label class="setting-row">
-            <span><strong>Kimi AK</strong><small>留空则保留原 AK</small></span>
-            <input type="password" data-setting="kimiApiKey" value="${escapeHtml(draft.kimiApiKey || "")}" placeholder="${draft.hasKimiApiKey ? `已保存 ${draft.kimiApiKeyMasked}` : "请输入 Moonshot/Kimi API Key"}" autocomplete="off" />
+            <span><strong>${providerInfo.label || "模型"} AK</strong><small>留空则保留原 AK</small></span>
+            <input type="password" data-setting="apiKey" value="${escapeHtml(draft.apiKey || "")}" placeholder="${draft.hasApiKey || draft.hasKimiApiKey ? `已保存 ${draft.apiKeyMasked || draft.kimiApiKeyMasked}` : "请输入当前供应商 API Key"}" autocomplete="off" />
           </label>
         </section>
         <section class="settings-section">
@@ -1976,7 +2002,7 @@ function portfolioUpdateModal() {
           <label class="upload-box upload-box-large ${busy ? "is-loading" : ""}">
             <input type="file" accept="image/*" data-position-image ${busy ? "disabled" : ""} />
             <strong>${busy ? "正在处理持股截图" : "上传持股截图"}</strong>
-            <span>${state.ocrProgress || "Kimi 将识别股票名称、成本价和持有数量；完成后浮层会自动关闭。"}</span>
+            <span>${state.ocrProgress || "AI 模型将识别股票名称、成本价和持有数量；完成后浮层会自动关闭。"}</span>
           </label>
           <div class="upload-progress ${busy ? "active" : ""}">
             <span></span>
@@ -2041,6 +2067,11 @@ function portfolioTAdvice(advice = {}) {
       </div>
       <p>${advice.plan || ""}</p>
       ${portfolioTOrders(advice.orders)}
+      ${advice.technical ? `<div class="portfolio-t-tags">
+        <span>${advice.technical.macdLabel || "MACD待确认"}</span>
+        <span>${advice.technical.sarLabel || "SAR待确认"}</span>
+        <span>${advice.discipline || "保留底仓，破位不接回"}</span>
+      </div>` : ""}
       <small>${advice.reason || ""}${advice.pulse?.detail ? ` ${advice.pulse.detail}。` : ""}</small>
     </div>
   `;
@@ -2101,7 +2132,7 @@ function portfolioSummaryView(summary) {
           <span>组合总结</span>
           <strong class="${pctClass(summary.totalPnlPct)}">${summary.tone || "等待分析"}</strong>
         </div>
-        <small>${state.portfolioParser?.includes("kimi") ? "Kimi 识别 + 持久化持股" : "本地持股 + 实时行情"}</small>
+        <small>${state.portfolioParser?.includes("ai") ? "AI 识别 + 持久化持股" : "本地持股 + 实时行情"}</small>
       </div>
       <div class="detail-metrics portfolio-summary-metrics">
         ${metricItem("持仓数量", `${summary.count || 0}只`)}
@@ -2939,7 +2970,17 @@ app.addEventListener("change", (event) => {
   if (event.target.matches("[data-setting]")) {
     const key = event.target.dataset.setting;
     const value = event.target.type === "checkbox" ? event.target.checked : event.target.value;
-    state.settingsDraft = { ...(state.settingsDraft || {}), [key]: value };
+    const draft = { ...(state.settingsDraft || {}), [key]: value };
+    if (key === "aiProvider") {
+      const providerInfo = draft.aiProviders?.[value] || state.settings?.aiProviders?.[value] || {};
+      draft.apiUrl = providerInfo.apiUrl || draft.apiUrl || "";
+      draft.ocrApiUrl = providerInfo.ocrApiUrl || "";
+      draft.textModel = providerInfo.textModel || draft.textModel || "";
+      draft.visionModel = providerInfo.visionModel || "";
+      draft.advisorModel = providerInfo.advisorModel || draft.advisorModel || "";
+      draft.apiKey = "";
+    }
+    state.settingsDraft = draft;
     render();
   }
 });

@@ -15,10 +15,11 @@ PLIST_ID="${PLIST_ID:-com.guanlan.stockradar}"
 PLIST_FILE="${HOME}/Library/LaunchAgents/${PLIST_ID}.plist"
 LOG_DIR="${HOME}/Library/Logs/guanlan"
 KIMI_API_URL_DEFAULT="${KIMI_API_URL_DEFAULT:-https://api.moonshot.ai/v1/chat/completions}"
-KIMI_MODEL_DEFAULT="${KIMI_MODEL_DEFAULT:-moonshot-v1-auto}"
-KIMI_VISION_MODEL_DEFAULT="${KIMI_VISION_MODEL_DEFAULT:-moonshot-v1-8k-vision-preview}"
-ADVISOR_MODEL_DEFAULT="${ADVISOR_MODEL_DEFAULT:-kimi-k2.5}"
+KIMI_MODEL_DEFAULT="${KIMI_MODEL_DEFAULT:-kimi-k2.6}"
+KIMI_VISION_MODEL_DEFAULT="${KIMI_VISION_MODEL_DEFAULT:-kimi-k2.6}"
+ADVISOR_MODEL_DEFAULT="${ADVISOR_MODEL_DEFAULT:-kimi-k2.6}"
 MARKET_DATA_SOURCE_DEFAULT="${MARKET_DATA_SOURCE_DEFAULT:-auto}"
+AI_PROVIDER_DEFAULT="${AI_PROVIDER_DEFAULT:-kimi}"
 
 log() {
   printf '\033[1;34m[guanlan]\033[0m %s\n' "$*"
@@ -49,8 +50,7 @@ ask() {
 ask_secret() {
   local prompt="$1"
   local answer
-  read -r -s -p "${prompt}: " answer
-  printf '\n' >&2
+  read -r -p "${prompt}: " answer
   printf '%s' "$answer"
 }
 
@@ -123,15 +123,68 @@ sync_app_files() {
 }
 
 write_env_and_settings() {
-  local api_key api_url kimi_model vision_model advisor_model market_source use_cache_bool use_cache_text
-  api_key="${KIMI_API_KEY:-}"
+  local ai_provider provider_label api_key api_url text_model vision_model advisor_model market_source use_cache_bool use_cache_text
+  local kimi_api_key kimi_api_url kimi_model kimi_vision_model
+  ai_provider="$(ask "模型供应商 kimi/deepseek/minimax/glm" "${AI_PROVIDER:-$AI_PROVIDER_DEFAULT}")"
+  case "$ai_provider" in
+    kimi)
+      provider_label="Kimi"
+      api_url="${AI_API_URL:-$KIMI_API_URL_DEFAULT}"
+      text_model="${AI_TEXT_MODEL:-$KIMI_MODEL_DEFAULT}"
+      vision_model="${AI_VISION_MODEL:-$KIMI_VISION_MODEL_DEFAULT}"
+      advisor_model="${ADVISOR_MODEL:-$ADVISOR_MODEL_DEFAULT}"
+      ;;
+    deepseek)
+      provider_label="DeepSeek"
+      api_url="${AI_API_URL:-https://api.deepseek.com/chat/completions}"
+      text_model="${AI_TEXT_MODEL:-deepseek-v4-flash}"
+      vision_model="${AI_VISION_MODEL:-deepseek-ocr}"
+      advisor_model="${ADVISOR_MODEL:-deepseek-v4-flash}"
+      ;;
+    minimax)
+      provider_label="MiniMax"
+      api_url="${AI_API_URL:-https://api.minimax.io/v1/chat/completions}"
+      text_model="${AI_TEXT_MODEL:-MiniMax-M3}"
+      vision_model="${AI_VISION_MODEL:-}"
+      advisor_model="${ADVISOR_MODEL:-MiniMax-M3}"
+      ;;
+    glm)
+      provider_label="GLM"
+      api_url="${AI_API_URL:-https://open.bigmodel.cn/api/paas/v4/chat/completions}"
+      text_model="${AI_TEXT_MODEL:-glm-5.1}"
+      vision_model="${AI_VISION_MODEL:-glm-ocr}"
+      advisor_model="${ADVISOR_MODEL:-glm-5.1}"
+      ;;
+    *)
+      warn "未知模型供应商 ${ai_provider}，已改为 kimi"
+      ai_provider="kimi"
+      provider_label="Kimi"
+      api_url="${AI_API_URL:-$KIMI_API_URL_DEFAULT}"
+      text_model="${AI_TEXT_MODEL:-$KIMI_MODEL_DEFAULT}"
+      vision_model="${AI_VISION_MODEL:-$KIMI_VISION_MODEL_DEFAULT}"
+      advisor_model="${ADVISOR_MODEL:-$ADVISOR_MODEL_DEFAULT}"
+      ;;
+  esac
+
+  api_key="${AI_API_KEY:-${KIMI_API_KEY:-}}"
   if [[ -z "$api_key" ]]; then
-    api_key="$(ask_secret "请输入 Kimi AK（可留空，留空后个股讨论/新闻/OCR 能力会受限）")"
+    api_key="$(ask_secret "请输入 ${provider_label} AK（输入内容会显示在终端；可留空，留空后个股讨论/新闻/OCR 能力会受限）")"
   fi
-  api_url="$(ask "Kimi API 地址" "${KIMI_API_URL:-$KIMI_API_URL_DEFAULT}")"
-  kimi_model="$(ask "文本/联网分析模型" "${KIMI_MODEL:-$KIMI_MODEL_DEFAULT}")"
-  vision_model="$(ask "图片 OCR 模型" "${KIMI_VISION_MODEL:-$KIMI_VISION_MODEL_DEFAULT}")"
-  advisor_model="$(ask "观澜理财师模型" "${ADVISOR_MODEL:-$ADVISOR_MODEL_DEFAULT}")"
+  api_url="$(ask "${provider_label} API 地址" "$api_url")"
+  text_model="$(ask "文本/分析模型" "$text_model")"
+  vision_model="$(ask "图片 OCR 模型（无视觉模型可留空）" "$vision_model")"
+  advisor_model="$(ask "观澜理财师模型" "$advisor_model")"
+  if [[ "$ai_provider" == "kimi" ]]; then
+    kimi_api_key="$api_key"
+    kimi_api_url="$api_url"
+    kimi_model="$text_model"
+    kimi_vision_model="$vision_model"
+  else
+    kimi_api_key=""
+    kimi_api_url="$KIMI_API_URL_DEFAULT"
+    kimi_model="$KIMI_MODEL_DEFAULT"
+    kimi_vision_model="$KIMI_VISION_MODEL_DEFAULT"
+  fi
   market_source="$(ask "行情数据源 auto/tencent/eastmoney/sina" "${MARKET_DATA_SOURCE:-$MARKET_DATA_SOURCE_DEFAULT}")"
   case "$market_source" in
     auto|tencent|eastmoney|sina) ;;
@@ -150,12 +203,18 @@ write_env_and_settings() {
   fi
 
   log "写入 ${APP_DIR}/.env.local"
-  cat > "${APP_DIR}/.env.local" <<EOF
+cat > "${APP_DIR}/.env.local" <<EOF
 PORT=${PORT}
-KIMI_API_KEY=${api_key}
-KIMI_API_URL=${api_url}
+AI_PROVIDER=${ai_provider}
+AI_API_KEY=${api_key}
+AI_API_URL=${api_url}
+AI_OCR_API_URL=${AI_OCR_API_URL:-}
+AI_TEXT_MODEL=${text_model}
+AI_VISION_MODEL=${vision_model}
+KIMI_API_KEY=${kimi_api_key}
+KIMI_API_URL=${kimi_api_url}
 KIMI_MODEL=${kimi_model}
-KIMI_VISION_MODEL=${vision_model}
+KIMI_VISION_MODEL=${kimi_vision_model}
 ADVISOR_MODEL=${advisor_model}
 NODE_ENV=production
 EOF
@@ -172,14 +231,19 @@ EOF
   log "写入 ${APP_DIR}/data/settings.json"
   cat > "${APP_DIR}/data/settings.json" <<EOF
 {
-  "aiProvider": "kimi",
-  "kimiApiUrl": "${api_url}",
-  "kimiModel": "${kimi_model}",
-  "kimiVisionModel": "${vision_model}",
+  "aiProvider": "${ai_provider}",
+  "apiUrl": "${api_url}",
+  "ocrApiUrl": "${AI_OCR_API_URL:-}",
+  "textModel": "${text_model}",
+  "visionModel": "${vision_model}",
   "advisorModel": "${advisor_model}",
   "advisorRole": "你是观澜理财师，一名资深 A 股股票交易专家。你擅长从板块强弱、主力资金、K线位置、量能、消息催化和风险位综合判断交易机会。",
   "advisorStyle": "风格偏激进，回答简约直接。优先给结论、买卖触发价、仓位和风险位；少讲空话。所有内容仅作交易分析辅助，不承诺收益。",
-  "kimiApiKey": "${api_key}",
+  "apiKey": "${api_key}",
+  "kimiApiUrl": "${kimi_api_url}",
+  "kimiModel": "${kimi_model}",
+  "kimiVisionModel": "${kimi_vision_model}",
+  "kimiApiKey": "${kimi_api_key}",
   "useCache": ${use_cache_bool},
   "marketDataSource": "${market_source}"
 }
