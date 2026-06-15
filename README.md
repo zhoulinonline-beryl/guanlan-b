@@ -38,7 +38,7 @@
   - 基于当前最新价、成本价和持有数量分析盈亏、仓位、做 T 档位和风险。
 
 - **个股讨论**
-  - 支持使用 Kimi、DeepSeek、MiniMax、GLM 作为观澜理财师。
+  - 支持使用 Kimi 国内版、Kimi 国际版、DeepSeek、MiniMax、GLM 作为观澜理财师。
   - 可讨论股票、板块、持仓、做 T、新闻政策和建仓计划。
   - 自动调用应用内行情、板块、推荐池、持仓、K 线、新闻等上下文。
   - 当模型反问时，支持多选快捷回复。
@@ -56,12 +56,12 @@
 
 - 腾讯行情接口：个股实时行情。
 - 东方财富接口：板块资金、指数、K 线等。
-- Kimi/Moonshot、DeepSeek、MiniMax、GLM：新闻政策总结、持仓文本解析、个股讨论。
+- Kimi 国内版/Moonshot CN、Kimi 国际版/Moonshot AI、DeepSeek、MiniMax、GLM：新闻政策总结、持仓文本解析、个股讨论。
 - OCR：Kimi 使用 `kimi-k2.6` 视觉能力；DeepSeek 预留 `deepseek-ocr`；MiniMax 使用 `MiniMax-VL-01`；GLM 使用专用 `glm-ocr` layout parsing 接口。
 
 默认模型：
 
-- 默认供应商：`kimi`
+- 默认供应商：`kimi-cn`
 - 文本/联网分析模型：`kimi-k2.6`
 - 视觉识别模型：`kimi-k2.6`
 - 观澜理财师：`kimi-k2.6`
@@ -71,6 +71,12 @@
 - DeepSeek：`deepseek-v4-flash`，OCR 预设 `deepseek-ocr`
 - MiniMax：`MiniMax-M3`，OCR 预设 `MiniMax-VL-01`
 - GLM：`glm-5.1`，OCR 预设 `glm-ocr`
+
+Kimi API 版本：
+
+- `kimi-cn`：国内版，默认地址 `https://api.moonshot.cn/v1/chat/completions`
+- `kimi-intl`：国际版，默认地址 `https://api.moonshot.ai/v1/chat/completions`
+- 设置页和安装脚本都允许手工修改 API 地址。
 
 ## 项目结构
 
@@ -125,8 +131,8 @@ chmod +x install-macos.sh
 
 安装脚本会引导你输入：
 
-- 模型供应商：`kimi` / `deepseek` / `minimax` / `glm`
-- 对应供应商 AK（安装时为可见输入，会直接显示在终端；请避免在共享屏幕或公共终端中输入）
+- 模型供应商：通过 1-5 编号选择 `kimi-cn` / `kimi-intl` / `deepseek` / `minimax` / `glm`，脚本会回显已选择的供应商
+- 对应供应商 AK（安装时为明文输入，会直接显示在终端，便于确认粘贴完整；请避免在共享屏幕或公共终端中输入）
 - 对应供应商 API 地址、文本模型、视觉模型、理财师模型
 - 行情数据源：`auto` / `tencent` / `eastmoney` / `sina`
 - 是否启用缓存
@@ -219,8 +225,8 @@ sudo bash deploy-aliyun-ecs.sh
 
 脚本会引导你输入：
 
-- 模型供应商：`kimi` / `deepseek` / `minimax` / `glm`
-- 对应供应商 AK
+- 模型供应商：通过 1-5 编号选择 `kimi-cn` / `kimi-intl` / `deepseek` / `minimax` / `glm`，脚本会回显已选择的供应商
+- 对应供应商 AK（明文输入，便于确认粘贴完整）
 - API 地址、OCR 地址、文本模型、OCR 模型、理财师模型
 - 行情数据源：`auto` / `tencent` / `eastmoney` / `sina`
 - 是否启用缓存
@@ -308,9 +314,9 @@ data/settings.example.json
 
 ```bash
 PORT=5173
-AI_PROVIDER=kimi
+AI_PROVIDER=kimi-cn
 AI_API_KEY=sk-xxx
-AI_API_URL=https://api.moonshot.ai/v1/chat/completions
+AI_API_URL=https://api.moonshot.cn/v1/chat/completions
 AI_OCR_API_URL=
 AI_TEXT_MODEL=kimi-k2.6
 AI_VISION_MODEL=kimi-k2.6
@@ -318,7 +324,7 @@ ADVISOR_MODEL=kimi-k2.6
 NODE_ENV=production
 ```
 
-说明：`install-macos.sh` 中输入模型 AK 时不会隐藏字符，便于确认是否粘贴完整；脚本会把 AK 写入 `.env.local` 和 `data/settings.json`，并设置为仅当前用户可读写。
+说明：`install-macos.sh` 和 `deploy-aliyun-ecs.sh` 都会先通过编号选择模型供应商，再明文输入对应 AK，便于确认供应商和密钥没有填错；脚本会把 AK 写入 `.env.local` 和 `data/settings.json`，并设置为仅当前用户可读写。
 
 ## 缓存策略
 

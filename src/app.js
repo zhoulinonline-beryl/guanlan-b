@@ -1838,23 +1838,26 @@ function renderMarkdown(text = "") {
 function settingsPage() {
   const draft = state.settingsDraft || state.settings || {};
   const providers = draft.aiProviders || state.settings?.aiProviders || {};
-  const provider = draft.aiProvider || "kimi";
+  const provider = draft.aiProvider === "kimi" ? "kimi-cn" : (draft.aiProvider || "kimi-cn");
   const providerInfo = providers[provider] || {};
   const providerOptions = Object.entries(providers).length ? Object.entries(providers) : [
-    ["kimi", { label: "Kimi / Moonshot" }],
+    ["kimi-cn", { label: "Kimi 国内版 / Moonshot CN" }],
+    ["kimi-intl", { label: "Kimi 国际版 / Moonshot AI" }],
     ["deepseek", { label: "DeepSeek" }],
     ["minimax", { label: "MiniMax" }],
     ["glm", { label: "GLM / 智谱" }]
   ];
   const modelPresets = {
-    kimi: ["kimi-k2.6", "kimi-k2.5", "moonshot-v1-auto", "moonshot-v1-32k", "moonshot-v1-128k"],
+    "kimi-cn": ["kimi-k2.6", "kimi-k2.5", "moonshot-v1-auto", "moonshot-v1-32k", "moonshot-v1-128k"],
+    "kimi-intl": ["kimi-k2.6", "kimi-k2.5", "moonshot-v1-auto", "moonshot-v1-32k", "moonshot-v1-128k"],
     deepseek: ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
     minimax: ["MiniMax-M3", "MiniMax-M2.5", "MiniMax-M2", "MiniMax-M1"],
     glm: ["glm-5.1", "glm-4.6", "glm-4.5", "glm-4-air", "glm-4v-plus"]
   };
   const modelOptions = [...new Set([draft.textModel, providerInfo.textModel, ...(modelPresets[provider] || [])].filter(Boolean))];
   const advisorOptions = [...new Set([draft.advisorModel, providerInfo.advisorModel, ...(modelPresets[provider] || [])].filter(Boolean))];
-  const visionOptions = [...new Set([draft.visionModel, providerInfo.visionModel, ...(provider === "kimi" ? ["kimi-k2.6", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview"] : provider === "deepseek" ? ["deepseek-ocr"] : provider === "minimax" ? ["MiniMax-VL-01"] : provider === "glm" ? ["glm-ocr", "GLM-5V-Turbo", "glm-4v-plus"] : [])].filter(Boolean))];
+  const visionOptions = [...new Set([draft.visionModel, providerInfo.visionModel, ...(provider.startsWith("kimi") ? ["kimi-k2.6", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview"] : provider === "deepseek" ? ["deepseek-ocr"] : provider === "minimax" ? ["MiniMax-VL-01"] : provider === "glm" ? ["glm-ocr", "GLM-5V-Turbo", "glm-4v-plus"] : [])].filter(Boolean))];
+  const currentApiUrl = draft.apiUrl || providerInfo.apiUrl || "";
   const marketSourceOptions = [
     ["auto", "自动兜底（推荐）", "腾讯、东方财富、新浪/搜狐按接口类型自动选择，失败后继续尝试其它源。"],
     ["tencent", "优先腾讯行情", "个股报价和 K 线优先使用腾讯，失败后自动兜底。"],
@@ -1873,7 +1876,7 @@ function settingsPage() {
         <section class="settings-section">
           <div class="settings-section-title">
             <h2>调用模型</h2>
-            <span>选择 Kimi、DeepSeek、MiniMax 或 GLM，并填写对应 AK。</span>
+            <span>选择 Kimi 国内版/国际版、DeepSeek、MiniMax 或 GLM，并填写对应 AK；API 地址可手工修改。</span>
           </div>
           <label class="setting-row">
             <span><strong>模型供应商</strong><small>保存后立即切换底层调用</small></span>
@@ -1893,9 +1896,13 @@ function settingsPage() {
               ${visionOptions.length ? visionOptions.map((item) => `<option value="${item}" ${(draft.visionModel || providerInfo.visionModel) === item ? "selected" : ""}>${item}</option>`).join("") : `<option value="">不启用 OCR 模型</option>`}
             </select>
           </label>
-          <label class="setting-row">
+          <label class="setting-row setting-row-wide setting-url-row">
             <span><strong>API 地址</strong><small>Chat Completions</small></span>
-            <input data-setting="apiUrl" value="${escapeHtml(draft.apiUrl || providerInfo.apiUrl || "")}" placeholder="${escapeHtml(providerInfo.apiUrl || "https://.../chat/completions")}" />
+            <input class="setting-url-input" data-setting="apiUrl" value="${escapeHtml(currentApiUrl)}" placeholder="${escapeHtml(providerInfo.apiUrl || "https://.../chat/completions")}" title="${escapeHtml(currentApiUrl)}" spellcheck="false" autocomplete="off" />
+            <div class="setting-url-current">
+              <span>当前已设置</span>
+              <code>${escapeHtml(currentApiUrl || "未设置")}</code>
+            </div>
           </label>
           <label class="setting-row">
             <span><strong>${providerInfo.label || "模型"} AK</strong><small>留空则保留原 AK</small></span>
@@ -2404,7 +2411,7 @@ function stockNewsPolicyView(stock) {
     return `
       <section class="stock-news-panel">
         <div class="stock-news-head">
-          <div><span>政策/新闻 Top3</span><strong>正在同步近 1 天消息</strong></div>
+          <div><span>政策/新闻 Top3</span><strong>正在同步近 3 天消息</strong></div>
           <small>优先匹配 ${stock.name || stock.code} 的政策、资金和公司事件。</small>
         </div>
         <div class="stock-news-empty">新闻源同步中，先以 K 线、MACD、SAR、BOLL 的共振结果作为主判断。</div>
@@ -2415,7 +2422,7 @@ function stockNewsPolicyView(stock) {
     return `
       <section class="stock-news-panel">
         <div class="stock-news-head">
-          <div><span>政策/新闻 Top3</span><strong>近 1 天暂无强相关消息</strong></div>
+          <div><span>政策/新闻 Top3</span><strong>近 3 天暂无强相关消息</strong></div>
           <small>${stock.newsError || "当前未抓取到可引用的实时新闻。"} </small>
         </div>
         <div class="stock-news-empty">操作建议：消息面暂不构成新增买卖理由，继续以量价位置、主力净额和指标共振确认。</div>
@@ -2437,7 +2444,7 @@ function stockNewsPolicyView(stock) {
               <div class="stock-news-meta">
                 <span>${item.kind || "新闻"} · ${item.tone || "中性观察"}</span>
                 <span>${item.source || "新闻源"}</span>
-                <span>${item.time ? new Date(item.time).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "近 1 天"}</span>
+                <span>${item.time ? new Date(item.time).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "近 3 天"}</span>
               </div>
               <p>${item.reason || item.impact || "关注该消息是否改变市场对公司短线预期。"}</p>
               <strong>${item.advice || "建议结合技术指标确认，不单独依据消息面追涨杀跌。"}</strong>

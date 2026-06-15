@@ -12,7 +12,7 @@ set -Eeuo pipefail
 #   APP_DIR=/opt/guanlan-stock-radar
 #   PORT=5173
 #   DOMAIN=radar.example.com
-#   AI_PROVIDER=kimi|deepseek|minimax|glm
+#   AI_PROVIDER=kimi-cn|kimi-intl|deepseek|minimax|glm
 #   AI_API_KEY=sk-xxx
 
 APP_NAME="${APP_NAME:-guanlan-stock-radar}"
@@ -24,8 +24,9 @@ SOURCE_DIR="$(pwd)"
 SERVICE_USER="${SERVICE_USER:-root}"
 NGINX_CONF="/etc/nginx/conf.d/${APP_NAME}.conf"
 SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
-AI_PROVIDER_DEFAULT="${AI_PROVIDER_DEFAULT:-kimi}"
-KIMI_API_URL_DEFAULT="${KIMI_API_URL_DEFAULT:-https://api.moonshot.ai/v1/chat/completions}"
+AI_PROVIDER_DEFAULT="${AI_PROVIDER_DEFAULT:-kimi-cn}"
+KIMI_API_URL_DEFAULT="${KIMI_API_URL_DEFAULT:-https://api.moonshot.cn/v1/chat/completions}"
+KIMI_INTL_API_URL_DEFAULT="${KIMI_INTL_API_URL_DEFAULT:-https://api.moonshot.ai/v1/chat/completions}"
 KIMI_MODEL_DEFAULT="${KIMI_MODEL_DEFAULT:-kimi-k2.6}"
 KIMI_VISION_MODEL_DEFAULT="${KIMI_VISION_MODEL_DEFAULT:-kimi-k2.6}"
 ADVISOR_MODEL_DEFAULT="${ADVISOR_MODEL_DEFAULT:-kimi-k2.6}"
@@ -74,6 +75,38 @@ ask_yes_no() {
     y|Y|yes|YES|Yes) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+choose_ai_provider() {
+  local preset="${AI_PROVIDER:-$AI_PROVIDER_DEFAULT}"
+  local default_choice="1"
+  case "$preset" in
+    kimi|kimi-cn) default_choice="1" ;;
+    kimi-intl) default_choice="2" ;;
+    deepseek) default_choice="3" ;;
+    minimax) default_choice="4" ;;
+    glm) default_choice="5" ;;
+  esac
+
+  echo "请选择模型供应商：" >&2
+  echo "  1) Kimi 国内版（默认：https://api.moonshot.cn）" >&2
+  echo "  2) Kimi 国际版（默认：https://api.moonshot.ai）" >&2
+  echo "  3) DeepSeek" >&2
+  echo "  4) MiniMax" >&2
+  echo "  5) GLM / 智谱" >&2
+  local choice
+  while true; do
+    read -r -p "请输入编号 [${default_choice}]: " choice
+    choice="${choice:-$default_choice}"
+    case "$choice" in
+      1) printf '%s' "kimi-cn"; return ;;
+      2) printf '%s' "kimi-intl"; return ;;
+      3) printf '%s' "deepseek"; return ;;
+      4) printf '%s' "minimax"; return ;;
+      5) printf '%s' "glm"; return ;;
+      *) warn "请输入 1-5 的编号，避免选错模型供应商。" ;;
+    esac
+  done
 }
 
 need_root() {
@@ -151,11 +184,20 @@ write_env_file() {
   local ai_provider provider_label api_key api_url ocr_api_url text_model vision_model advisor_model market_source use_cache_bool
   local kimi_api_key kimi_api_url kimi_model kimi_vision_model
 
-  ai_provider="$(ask "模型供应商 kimi/deepseek/minimax/glm" "${AI_PROVIDER:-$AI_PROVIDER_DEFAULT}")"
+  ai_provider="$(choose_ai_provider)"
   case "$ai_provider" in
-    kimi)
-      provider_label="Kimi"
+    kimi|kimi-cn)
+      ai_provider="kimi-cn"
+      provider_label="Kimi 国内版"
       api_url="${AI_API_URL:-$KIMI_API_URL_DEFAULT}"
+      ocr_api_url="${AI_OCR_API_URL:-}"
+      text_model="${AI_TEXT_MODEL:-$KIMI_MODEL_DEFAULT}"
+      vision_model="${AI_VISION_MODEL:-$KIMI_VISION_MODEL_DEFAULT}"
+      advisor_model="${ADVISOR_MODEL:-$ADVISOR_MODEL_DEFAULT}"
+      ;;
+    kimi-intl)
+      provider_label="Kimi 国际版"
+      api_url="${AI_API_URL:-$KIMI_INTL_API_URL_DEFAULT}"
       ocr_api_url="${AI_OCR_API_URL:-}"
       text_model="${AI_TEXT_MODEL:-$KIMI_MODEL_DEFAULT}"
       vision_model="${AI_VISION_MODEL:-$KIMI_VISION_MODEL_DEFAULT}"
@@ -186,9 +228,9 @@ write_env_file() {
       advisor_model="${ADVISOR_MODEL:-glm-5.1}"
       ;;
     *)
-      warn "未知模型供应商 ${ai_provider}，已改为 kimi"
-      ai_provider="kimi"
-      provider_label="Kimi"
+      warn "未知模型供应商 ${ai_provider}，已改为 kimi-cn"
+      ai_provider="kimi-cn"
+      provider_label="Kimi 国内版"
       api_url="${AI_API_URL:-$KIMI_API_URL_DEFAULT}"
       ocr_api_url="${AI_OCR_API_URL:-}"
       text_model="${AI_TEXT_MODEL:-$KIMI_MODEL_DEFAULT}"
@@ -197,9 +239,11 @@ write_env_file() {
       ;;
   esac
 
+  log "已选择模型供应商：${provider_label}（${ai_provider}）"
+
   api_key="${AI_API_KEY:-${KIMI_API_KEY:-}}"
   if [[ -z "$api_key" ]]; then
-    api_key="$(ask_secret "请输入 ${provider_label} AK（输入内容会显示在终端；可留空，留空后个股讨论/新闻/OCR 能力会受限）")"
+    api_key="$(ask_secret "请输入 ${provider_label} AK（明文显示，便于确认粘贴完整；可留空）")"
   fi
   api_url="$(ask "${provider_label} API 地址" "$api_url")"
   if [[ "$ai_provider" == "glm" ]]; then
@@ -223,7 +267,7 @@ write_env_file() {
     use_cache_bool="false"
   fi
 
-  if [[ "$ai_provider" == "kimi" ]]; then
+  if [[ "$ai_provider" == kimi-* ]]; then
     kimi_api_key="$api_key"
     kimi_api_url="$api_url"
     kimi_model="$text_model"
