@@ -2478,6 +2478,46 @@ button {
   line-height: 1.55;
 }
 
+.setting-url-row {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.setting-url-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  min-height: 38px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.setting-url-current {
+  display: grid;
+  gap: 5px;
+  padding: 8px 10px;
+  border: 1px solid rgba(116, 195, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(5, 14, 22, 0.62);
+}
+
+.setting-url-current span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.setting-url-current code {
+  color: #dce8ef;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
 .toggle-row {
   display: flex;
   justify-content: space-between;

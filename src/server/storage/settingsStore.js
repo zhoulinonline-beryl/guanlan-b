@@ -4,19 +4,20 @@ const { maskSecret } = require("../utils/security");
 
 function normalizeAiProvider(provider = DEFAULT_SETTINGS.aiProvider) {
   const value = String(provider || DEFAULT_SETTINGS.aiProvider || "kimi").trim().toLowerCase();
-  return AI_PROVIDERS[value] ? value : "kimi";
+  if (value === "kimi") return "kimi-cn";
+  return AI_PROVIDERS[value] ? value : "kimi-cn";
 }
 
 function providerDefaults(provider = DEFAULT_SETTINGS.aiProvider) {
-  return AI_PROVIDERS[normalizeAiProvider(provider)] || AI_PROVIDERS.kimi;
+  return AI_PROVIDERS[normalizeAiProvider(provider)] || AI_PROVIDERS["kimi-cn"];
 }
 
 function normalizeAiApiUrl(url = "", provider = DEFAULT_SETTINGS.aiProvider) {
-  return String(url || "").trim() || providerDefaults(provider).apiUrl;
+  return String(url || "").replace(/\s+/g, "").trim() || providerDefaults(provider).apiUrl;
 }
 
 function normalizeKimiApiUrl(url = "") {
-  return normalizeAiApiUrl(url, "kimi");
+  return normalizeAiApiUrl(url, "kimi-cn");
 }
 
 function normalizeMarketDataSource(source = "auto") {
@@ -28,7 +29,7 @@ function readAppSettings() {
   const stored = readJsonFile(SETTINGS_FILE, {});
   const provider = normalizeAiProvider(stored.aiProvider || DEFAULT_SETTINGS.aiProvider);
   const defaults = providerDefaults(provider);
-  const legacyKimiSelected = provider === "kimi";
+  const legacyKimiSelected = provider.startsWith("kimi");
   return {
     ...DEFAULT_SETTINGS,
     ...stored,
@@ -66,10 +67,10 @@ function writeAppSettings(next = {}) {
     advisorRole: String(next.advisorRole ?? current.advisorRole ?? DEFAULT_SETTINGS.advisorRole).trim(),
     advisorStyle: String(next.advisorStyle ?? current.advisorStyle ?? DEFAULT_SETTINGS.advisorStyle).trim(),
     apiKey: nextApiKey,
-    kimiApiUrl: provider === "kimi" ? apiUrl : (current.kimiApiUrl || DEFAULT_SETTINGS.kimiApiUrl),
-    kimiModel: provider === "kimi" ? textModel : (current.kimiModel || DEFAULT_SETTINGS.kimiModel),
-    kimiVisionModel: provider === "kimi" ? visionModel : (current.kimiVisionModel || DEFAULT_SETTINGS.kimiVisionModel),
-    kimiApiKey: provider === "kimi" ? nextApiKey : (current.kimiApiKey || DEFAULT_SETTINGS.kimiApiKey || ""),
+    kimiApiUrl: provider.startsWith("kimi") ? apiUrl : (current.kimiApiUrl || DEFAULT_SETTINGS.kimiApiUrl),
+    kimiModel: provider.startsWith("kimi") ? textModel : (current.kimiModel || DEFAULT_SETTINGS.kimiModel),
+    kimiVisionModel: provider.startsWith("kimi") ? visionModel : (current.kimiVisionModel || DEFAULT_SETTINGS.kimiVisionModel),
+    kimiApiKey: provider.startsWith("kimi") ? nextApiKey : (current.kimiApiKey || DEFAULT_SETTINGS.kimiApiKey || ""),
     useCache: Boolean(next.useCache),
     marketDataSource: source
   };
@@ -109,8 +110,8 @@ function publicSettings(settings = readAppSettings()) {
     kimiApiUrl: normalizeKimiApiUrl(settings.kimiApiUrl),
     kimiModel: settings.kimiModel,
     kimiVisionModel: settings.kimiVisionModel,
-    hasKimiApiKey: Boolean(settings.kimiApiKey || (provider === "kimi" && settings.apiKey)),
-    kimiApiKeyMasked: maskSecret(settings.kimiApiKey || (provider === "kimi" ? settings.apiKey : ""))
+    hasKimiApiKey: Boolean(settings.kimiApiKey || (provider.startsWith("kimi") && settings.apiKey)),
+    kimiApiKeyMasked: maskSecret(settings.kimiApiKey || (provider.startsWith("kimi") ? settings.apiKey : ""))
   };
 }
 

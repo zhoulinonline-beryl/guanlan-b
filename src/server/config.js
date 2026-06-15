@@ -36,8 +36,18 @@ const CACHE_FILE = path.join(DATA_DIR, "cache.json");
 const MARKET_SNAPSHOT_FILE = path.join(DATA_DIR, "market-snapshot.json");
 
 const AI_PROVIDERS = {
-  kimi: {
-    label: "Kimi / Moonshot",
+  "kimi-cn": {
+    label: "Kimi 国内版 / Moonshot CN",
+    apiUrl: "https://api.moonshot.cn/v1/chat/completions",
+    textModel: "kimi-k2.6",
+    visionModel: "kimi-k2.6",
+    advisorModel: "kimi-k2.6",
+    ocrMode: "chatVision",
+    supportsWebSearch: true,
+    supportsVision: true
+  },
+  "kimi-intl": {
+    label: "Kimi 国际版 / Moonshot AI",
     apiUrl: "https://api.moonshot.ai/v1/chat/completions",
     textModel: "kimi-k2.6",
     visionModel: "kimi-k2.6",
@@ -79,7 +89,8 @@ const AI_PROVIDERS = {
   }
 };
 
-const DEFAULT_AI_PROVIDER = AI_PROVIDERS[process.env.AI_PROVIDER] ? process.env.AI_PROVIDER : "kimi";
+const DEFAULT_AI_PROVIDER_ENV = process.env.AI_PROVIDER === "kimi" ? "kimi-cn" : process.env.AI_PROVIDER;
+const DEFAULT_AI_PROVIDER = AI_PROVIDERS[DEFAULT_AI_PROVIDER_ENV] ? DEFAULT_AI_PROVIDER_ENV : "kimi-cn";
 const DEFAULT_AI_PROVIDER_CONFIG = AI_PROVIDERS[DEFAULT_AI_PROVIDER];
 
 const DEFAULT_SETTINGS = {
@@ -92,9 +103,9 @@ const DEFAULT_SETTINGS = {
   advisorRole: "你是观澜理财师，一名资深 A 股股票交易专家。你擅长从板块强弱、主力资金、K线位置、量能、消息催化和风险位综合判断交易机会。",
   advisorStyle: "风格偏激进，回答简约直接。优先给结论、买卖触发价、仓位和风险位；少讲空话。所有内容仅作交易分析辅助，不承诺收益。",
   apiKey: process.env.AI_API_KEY || process.env.KIMI_API_KEY || process.env.MOONSHOT_API_KEY || "",
-  kimiApiUrl: process.env.KIMI_API_URL || AI_PROVIDERS.kimi.apiUrl,
-  kimiModel: process.env.KIMI_MODEL || AI_PROVIDERS.kimi.textModel,
-  kimiVisionModel: process.env.KIMI_VISION_MODEL || AI_PROVIDERS.kimi.visionModel,
+  kimiApiUrl: process.env.KIMI_API_URL || AI_PROVIDERS["kimi-cn"].apiUrl,
+  kimiModel: process.env.KIMI_MODEL || AI_PROVIDERS["kimi-cn"].textModel,
+  kimiVisionModel: process.env.KIMI_VISION_MODEL || AI_PROVIDERS["kimi-cn"].visionModel,
   kimiApiKey: process.env.KIMI_API_KEY || process.env.MOONSHOT_API_KEY || "",
   useCache: true,
   marketDataSource: process.env.MARKET_DATA_SOURCE || "auto"

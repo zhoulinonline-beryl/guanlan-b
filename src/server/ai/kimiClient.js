@@ -6,7 +6,8 @@ function aiConfig() {
   const settings = readAppSettings();
   const provider = settings.aiProvider || DEFAULT_SETTINGS.aiProvider;
   const defaults = providerDefaults(provider);
-  const apiKey = settings.apiKey || (provider === "kimi" ? settings.kimiApiKey : "") || DEFAULT_SETTINGS.apiKey;
+  const isKimi = provider.startsWith("kimi");
+  const apiKey = settings.apiKey || (isKimi ? settings.kimiApiKey : "") || DEFAULT_SETTINGS.apiKey;
   return {
     provider,
     providerLabel: defaults.label,
@@ -31,7 +32,7 @@ function hasAiKey() {
 
 function kimiChatOptions(model, base = {}, provider = aiConfig().provider) {
   const text = String(model || "");
-  if (provider === "kimi" && /^kimi-k2\./.test(text)) {
+  if (provider.startsWith("kimi") && /^kimi-k2\./.test(text)) {
     return {
       ...base,
       temperature: 0.6,
@@ -46,7 +47,7 @@ function kimiChatOptions(model, base = {}, provider = aiConfig().provider) {
 
 function aiFallbackUrls(primaryUrl, provider = aiConfig().provider) {
   const urls = [normalizeAiApiUrl(primaryUrl, provider)];
-  const extras = provider === "kimi"
+  const extras = provider.startsWith("kimi")
     ? ["https://api.moonshot.cn/v1/chat/completions", "https://api.moonshot.ai/v1/chat/completions"]
     : [];
   for (const item of extras) {
@@ -56,7 +57,7 @@ function aiFallbackUrls(primaryUrl, provider = aiConfig().provider) {
 }
 
 function kimiFallbackUrls(primaryUrl) {
-  return aiFallbackUrls(primaryUrl, "kimi");
+  return aiFallbackUrls(primaryUrl, "kimi-cn");
 }
 
 async function chatCompletion({ model, messages, temperature = 0.35, maxTokens, tools, providerConfig = aiConfig(), extra = {} }) {
@@ -174,7 +175,7 @@ async function kimiWebSearchJson({ prompt, cacheKey, ttl = 10 * 60 * 1000 }) {
       tools,
       temperature: 0.2,
       providerConfig: config,
-      extra: config.provider === "kimi" ? { thinking: { type: "disabled" } } : {}
+      extra: config.provider.startsWith("kimi") ? { thinking: { type: "disabled" } } : {}
     });
     const choice = json.choices?.[0]?.message;
     if (!choice) throw new Error(`${config.providerLabel} 返回为空`);
@@ -213,7 +214,7 @@ async function kimiJson({ system, prompt, cacheKey = "", ttl = 10 * 60 * 1000 })
     ],
     temperature: 0.1,
     providerConfig: config,
-    extra: config.provider === "kimi" ? { thinking: { type: "disabled" } } : {}
+    extra: config.provider.startsWith("kimi") ? { thinking: { type: "disabled" } } : {}
   });
   const content = json.choices?.[0]?.message?.content || "";
   const parsed = parseLooseJson(content);
@@ -255,7 +256,7 @@ async function kimiVisionJson({ system, imageData, prompt, cacheKey = "", ttl = 
     ],
     temperature: 0.1,
     providerConfig: config,
-    extra: config.provider === "kimi" ? kimiChatOptions(config.visionModel, {}, config.provider) : {}
+    extra: config.provider.startsWith("kimi") ? kimiChatOptions(config.visionModel, {}, config.provider) : {}
   });
   const content = json.choices?.[0]?.message?.content || "";
   const parsed = parseLooseJson(content);

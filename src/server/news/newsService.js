@@ -1,6 +1,6 @@
 function createNewsService({ fetchText, kimiWebSearchJson, escapeXml, normalizeSectorName }) {
-  function normalizeKimiNewsItems(items = [], limit = 10, fallbackName = "") {
-    const oldest = Date.now() - 181 * 24 * 60 * 60 * 1000;
+  function normalizeKimiNewsItems(items = [], limit = 10, fallbackName = "", maxAgeDays = 181) {
+    const oldest = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
     return items
       .filter((item) => item && item.title && item.link)
       .map((item) => {
@@ -28,10 +28,12 @@ function createNewsService({ fetchText, kimiWebSearchJson, escapeXml, normalizeS
 
   async function getKimiStockNews(code, name, limit = 10) {
     const stockName = name || code;
+    const windowDays = 3;
     const prompt = [
-      `请全网搜索优先最近1天与 A 股股票「${stockName} ${code}」直接相关的新闻、公告、政策、产业催化或监管信息，最多${limit}条。`,
+      `请使用全网搜索最近${windowDays}天内与 A 股股票「${stockName} ${code}」直接相关的新闻、公告、政策、产业催化、监管信息或公司事件，最多${limit}条。`,
       `今天是 ${new Date().toISOString().slice(0, 10)}，不要返回未来日期的信息。`,
-      "如果最近1天不足3条，请放宽到最近30天；如果仍不足，再最多放宽到最近180天，但必须在 pubDate 标注真实发布日期，不要编造。",
+      `只返回最近${windowDays}天内的信息；如果不足3条也不要放宽到更早日期，必须在 pubDate 标注真实发布日期，不要编造。`,
+      "搜索范围不要局限在新闻站点，也要覆盖交易所/上市公司公告、监管机构、行业协会、权威媒体、财经网站和可公开访问的网页。",
       "必须是直接影响该上市公司本身的信息；如果股票名称也是券商/研究机构，排除其发布的行业研报、评级观点、策略报告，除非新闻直接涉及该公司公告、业绩、股东、融资、并购、监管、主营业务或股价交易。",
       "请优先选择权威媒体、交易所公告、公司公告、证券媒体、政策发布源。",
       "返回 JSON：{\"items\":[{\"title\":\"\",\"link\":\"\",\"source\":\"\",\"pubDate\":\"YYYY-MM-DD HH:mm\",\"kind\":\"政策|新闻|公告\",\"tone\":\"偏正面|偏负面|中性观察\",\"summary\":\"一句话摘要\",\"impact\":\"对该股的影响判断\",\"reason\":\"为什么影响交易判断\",\"advice\":\"具体操作建议\"}]}。",
@@ -39,9 +41,11 @@ function createNewsService({ fetchText, kimiWebSearchJson, escapeXml, normalizeS
     ].join("\n");
     const json = await kimiWebSearchJson({
       prompt,
-      cacheKey: `kimi-stock-news:${code}:${stockName}:${limit}`
+      cacheKey: `kimi-stock-news:${code}:${stockName}:${limit}:${windowDays}d`
     });
-    return normalizeKimiNewsItems(json.items || [], limit, stockName);
+    return normalizeKimiNewsItems(json.items || [], limit * 2, stockName, windowDays)
+      .filter((item) => isStockRelatedNews(item, code, stockName))
+      .slice(0, limit);
   }
 
   async function getStockNews(code, name, limit = 10) {
@@ -49,16 +53,18 @@ function createNewsService({ fetchText, kimiWebSearchJson, escapeXml, normalizeS
       const items = await getKimiStockNews(code, name, limit);
       if (items.length) return items;
     } catch {
-      // Kimi 失败时回退到 RSS，保证页面仍可用。
+      // 联网搜索失败时回退到公开搜索 RSS，保证页面仍可用。
     }
-    const keyword = encodeURIComponent(`A股 ${name || ""} ${code}`);
-    const url = `https://www.bing.com/news/search?q=${keyword}&format=rss&setlang=zh-CN`;
     try {
-      const text = await fetchText(url);
-      const items = parseRssItems(text);
-      const since = Date.now() - 24 * 60 * 60 * 1000;
-      return items
+      const since = Date.now() - 3 * 24 * 60 * 60 * 1000;
+      const items = await fetchWholeWebRssItems([
+        `A股 ${name || ""} ${code} 新闻 公告 政策`,
+        `${name || ""} ${code} 上市公司 公告 监管 业绩`,
+        `${name || ""} ${code} 资金 主力 股价`
+      ]);
+      return dedupeNewsItems(items)
         .filter((item) => item.title && item.link)
+        .filter((item) => isStockRelatedNews(item, code, name))
         .filter((item) => !item.time || item.time >= since)
         .sort((a, b) => stockNewsScore(b, code, name) - stockNewsScore(a, code, name))
         .map((item) => ({ ...item, ...stockNewsAdvice(item, code, name) }))
@@ -97,6 +103,47 @@ function createNewsService({ fetchText, kimiWebSearchJson, escapeXml, normalizeS
       const pubDate = escapeXml(block.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1] || "");
       return { title, link, description, pubDate, time: Date.parse(pubDate) || 0, source: sourceFromLink(rawLink) };
     });
+  }
+
+  function wholeWebSearchUrls(query) {
+    const keyword = encodeURIComponent(query);
+    return [
+      `https://www.bing.com/news/search?q=${keyword}&format=rss&setlang=zh-CN`,
+      `https://www.bing.com/search?q=${keyword}&format=rss&setlang=zh-CN`
+    ];
+  }
+
+  async function fetchWholeWebRssItems(queries = []) {
+    const urls = [...new Set(queries.flatMap((query) => wholeWebSearchUrls(String(query || "").trim())).filter(Boolean))];
+    const batches = await Promise.all(urls.map(async (url) => {
+      try {
+        const text = await fetchText(url);
+        const type = url.includes("/news/search") ? "Bing News" : "Bing Web";
+        return parseRssItems(text).map((item) => ({ ...item, searchSource: type }));
+      } catch {
+        return [];
+      }
+    }));
+    return batches.flat();
+  }
+
+  function dedupeNewsItems(items = []) {
+    const seen = new Set();
+    return items.filter((item) => {
+      const key = `${String(item.link || "").replace(/[?#].*$/, "")}|${String(item.title || "").replace(/\s+/g, "")}`;
+      if (!item.title || !item.link || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function isStockRelatedNews(item, code, name) {
+    const stockName = String(name || "").trim();
+    const compactName = stockName.replace(/股份|集团|有限责任公司|有限公司|科技|证券|银行/g, "");
+    const text = `${item.title || ""} ${item.description || ""} ${item.source || ""} ${item.link || ""}`;
+    if (code && text.includes(String(code))) return true;
+    if (stockName && text.includes(stockName)) return true;
+    return compactName.length >= 2 && text.includes(compactName);
   }
 
   function stockNewsScore(item, code, name) {
@@ -168,14 +215,15 @@ function createNewsService({ fetchText, kimiWebSearchJson, escapeXml, normalizeS
       const items = await getKimiSectorNews(name, limit);
       if (items.length) return items;
     } catch {
-      // Kimi 失败时回退到 RSS。
+      // 联网搜索失败时回退到公开搜索 RSS。
     }
-    const keyword = encodeURIComponent(`A股 ${name} 板块 政策 新闻`);
-    const url = `https://www.bing.com/news/search?q=${keyword}&format=rss&setlang=zh-CN`;
     try {
-      const text = await fetchText(url);
       const since = Date.now() - 24 * 60 * 60 * 1000;
-      const items = parseRssItems(text)
+      const items = dedupeNewsItems(await fetchWholeWebRssItems([
+        `A股 ${name} 板块 政策 新闻`,
+        `${name} 行业 政策 产业 监管 A股`,
+        `${name} 板块 主力 资金 催化`
+      ]))
         .filter((item) => item.title && item.link)
         .map((item) => ({
           ...item,
@@ -190,9 +238,10 @@ function createNewsService({ fetchText, kimiWebSearchJson, escapeXml, normalizeS
 
   async function getKimiSectorNews(name, limit = 3) {
     const prompt = [
-      `请全网搜索优先最近1天可能影响 A 股「${name}」板块的新闻、政策、产业事件或监管信息，最多${limit}条。`,
+      `请使用全网搜索优先查找最近1天可能影响 A 股「${name}」板块的新闻、政策、产业事件、监管信息或公开网页，最多${limit}条。`,
       `今天是 ${new Date().toISOString().slice(0, 10)}，不要返回未来日期的信息。`,
       "如果最近1天不足3条，请放宽到最近30天；如果仍不足，再最多放宽到最近180天，但必须在 pubDate 标注真实发布日期，不要编造。",
+      "搜索范围不要局限在新闻站点，也要覆盖政策发布源、交易所/协会公告、公司公告、权威媒体、财经网站和可公开访问的网页。",
       "请优先选择政策发布源、权威媒体、交易所/协会/公司公告、证券媒体。",
       "返回 JSON：{\"items\":[{\"title\":\"\",\"link\":\"\",\"source\":\"\",\"pubDate\":\"YYYY-MM-DD HH:mm\",\"kind\":\"政策|新闻|公告\",\"tone\":\"偏正面|偏负面|中性观察\",\"summary\":\"一句话摘要\",\"impact\":\"对该板块的影响判断\",\"reason\":\"为什么影响该板块\",\"advice\":\"对板块交易的具体建议\"}]}。",
       "impact 必须直接提到板块名称；advice 要说明是追踪、试仓、等待确认还是风险规避。"
