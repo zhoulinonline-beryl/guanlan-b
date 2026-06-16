@@ -47,7 +47,7 @@ const state = {
   modalPortfolioUpdate: false,
   modalSectorId: "",
   modalStockSort: "mainFlow",
-  stockChartIndicators: { kline: true, boll: true, sar: true, macd: true },
+  stockChartIndicators: { kline: true, boll: true, sar: true, bullgate: true, macd: true },
   modalStock: null,
   modalIndex: null,
   loading: true,
@@ -499,6 +499,98 @@ function topRecommendations(stocks = state.recommendations) {
     .map((stock) => ({ ...stock, buyOpportunityScore: recommendationOpportunityScore(stock) }))
     .sort((a, b) => recommendationOpportunityScore(b) - recommendationOpportunityScore(a))
     .slice(0, 20);
+}
+
+function isBuildPositionCandidate(stock) {
+  const score = recommendationOpportunityScore(stock);
+  const action = String(stock.advice?.action || stock.action || "");
+  const pct = Number(stock.pct);
+  const hotButNotExtreme = !Number.isFinite(pct) || pct <= 7.5;
+  const buildAction = /建仓|低吸|加仓|持有|试探|分批|等待回踩/.test(action);
+  const avoidAction = /减仓|离场|观望|等待数据|止损/.test(action);
+  return score >= 55 && hotButNotExtreme && (buildAction || score >= 72) && !avoidAction;
+}
+
+function buildPositionTop20(stocks = state.recommendations) {
+  const ranked = topRecommendations(stocks);
+  const seen = new Set();
+  const merged = [
+    ...ranked.filter(isBuildPositionCandidate),
+    ...ranked
+  ];
+  return merged.filter((stock) => {
+    const key = stock.code || stock.name;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 20);
+}
+
+function buildPositionReason(stock) {
+  const reasons = [];
+  const score = recommendationOpportunityScore(stock);
+  const technical = stock.technical || {};
+  if (Number.isFinite(Number(stock.mainFlow)) && Number(stock.mainFlow) > 0) reasons.push(`主力净流入 ${money(stock.mainFlow)}`);
+  if (Number.isFinite(Number(stock.mainFlowPct))) reasons.push(`主力占比 ${fmt(stock.mainFlowPct)}%`);
+  if (technical.macdLabel) reasons.push(`MACD ${technical.macdLabel}`);
+  if (technical.sarLabel) reasons.push(`SAR ${technical.sarLabel}`);
+  if (Number.isFinite(score)) reasons.push(`机会分 ${fmt(score, 1)}`);
+  return reasons.slice(0, 4).join(" · ") || stock.reason || "资金与技术信号相对靠前，适合加入建仓观察池。";
+}
+
+function recommendationBullGateSnapshot(stock = {}) {
+  const candles = stock.candles || stock.klines || [];
+  if (candles.length) {
+    const advice = stockAdvice({ ...stock, candles });
+    const gate = bullGateLine(candles).at(-1);
+    const latest = advice.latest || candles.at(-1) || {};
+    return { latest, gate, source: "kline" };
+  }
+  const price = Number(stock.price ?? stock.close);
+  const ma20 = Number(stock.technical?.ma20 ?? stock.ma20 ?? stock.advice?.latest?.ma20);
+  const fallbackGate = Number.isFinite(ma20) ? ma20 : Number.isFinite(price) ? price * 1.006 : NaN;
+  return {
+    latest: { close: price },
+    gate: fallbackGate,
+    source: Number.isFinite(ma20) ? "ma20" : "price"
+  };
+}
+
+function buildPositionBullGateAdvice(stock = {}) {
+  const { latest, gate, source } = recommendationBullGateSnapshot(stock);
+  const info = bullGateExplanation(latest, gate);
+  const close = Number(latest.close);
+  const gateValue = Number(gate);
+  const levelText = Number.isFinite(gateValue) ? fmt(gateValue) : "--";
+  const sourceText = source === "kline" ? "K线牛门" : source === "ma20" ? "MA20近似" : "现价近似";
+  if (!Number.isFinite(close) || !Number.isFinite(gateValue)) {
+    return {
+      tone: info.tone,
+      distance: info.distance,
+      levelText,
+      sourceText,
+      action: "等待 K 线同步后再确认建仓价。",
+      risk: "数据不足时不主动追价。"
+    };
+  }
+  if (close >= gateValue) {
+    return {
+      tone: info.tone,
+      distance: info.distance,
+      levelText,
+      sourceText,
+      action: `可围绕 ${levelText} 上方分批建仓，回踩不破再加。`,
+      risk: `收盘跌回 ${levelText} 下方，先撤回试仓或降仓。`
+    };
+  }
+  return {
+    tone: info.tone,
+    distance: info.distance,
+    levelText,
+    sourceText,
+    action: `暂等放量站上 ${levelText} 后再建仓，激进者只做小仓试错。`,
+    risk: "门下运行仍有卖压，不能越跌越补。"
+  };
 }
 
 function hasOpenOverlay() {
@@ -1695,6 +1787,12 @@ function sectorPage() {
 function recommendPage() {
   const meta = state.recommendMeta || {};
   const recommendations = topRecommendations();
+  const buildTop20 = buildPositionTop20();
+  const content = state.recLoading
+    ? loadingView()
+    : recommendations.length
+      ? buildPositionTop20View(buildTop20)
+      : `<div class="panel empty">后台推荐池正在生成，稍后会自动刷新；也可以点击顶部刷新立即重算。</div>`;
   return `
     <div class="section-head first-section">
       <h2>股票推荐 Top20</h2>
@@ -1702,12 +1800,13 @@ function recommendPage() {
     </div>
     <section class="quote-strip recommend-strip">
       <div><span>Top20候选</span><strong>${recommendations.length}只</strong></div>
+      <div><span>建仓Top20</span><strong>${buildTop20.length}只</strong></div>
       <div><span>后台状态</span><strong>${meta.status === "running" ? "扫描中" : meta.status === "error" ? "异常" : "已就绪"}</strong></div>
       <div><span>上次扫描</span><strong>${meta.refreshedAt ? new Date(meta.refreshedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "--"}</strong></div>
       <div><span>下次刷新</span><strong>${meta.nextRefreshAt ? new Date(meta.nextRefreshAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "15分钟内"}</strong></div>
     </section>
     ${meta.error ? `<div class="panel empty down">${meta.error}</div>` : ""}
-    ${state.recLoading ? loadingView() : recommendations.length ? recommendationList(recommendations) : `<div class="panel empty">后台推荐池正在生成，稍后会自动刷新；也可以点击顶部刷新立即重算。</div>`}
+    ${content}
   `;
 }
 
@@ -2301,6 +2400,62 @@ function portfolioSummaryView(summary) {
   `;
 }
 
+function buildPositionTop20View(stocks) {
+  if (!stocks.length) return `<div class="panel empty">暂无满足建仓条件的股票，等待下一轮推荐池刷新。</div>`;
+  return `
+    <section class="build-position-section">
+      <div class="section-head recommend-subhead">
+        <div>
+          <h2>Top20 最适合建仓</h2>
+          <span class="hint">优先筛选主力方向清晰、技术面允许分批建仓且涨幅未明显透支的标的</span>
+        </div>
+      </div>
+      <div class="build-position-grid">
+        ${stocks.map((stock, index) => {
+          const levels = stock.advice?.levels || {};
+          const score = recommendationOpportunityScore(stock);
+          const bullGate = buildPositionBullGateAdvice(stock);
+          return `
+            <article class="card build-position-card" data-stock="${stock.code}">
+              <div class="build-position-head">
+                <span class="rank-badge">#${index + 1}</span>
+                <div>
+                  <strong>${stock.name}</strong>
+                  <small>${stock.code} · ${stock.sectorName || "未分组"}</small>
+                </div>
+                <b>${fmt(score, 1)}</b>
+              </div>
+              <div class="build-position-quote">
+                <span>现价 <b>${fmt(stock.price)}</b></span>
+                <span>涨跌 <b class="${pctClass(stock.pct)}">${stock.pct > 0 ? "+" : ""}${fmt(stock.pct)}%</b></span>
+                <span>仓位 <b>${stock.advice?.position || "--"}</b></span>
+              </div>
+              <div class="build-position-levels">
+                <span>回踩 ${fmt(levels.pullbackBuy)}</span>
+                <span>突破 ${fmt(levels.breakoutBuy)}</span>
+                <span>止损 ${fmt(levels.stopLoss)}</span>
+              </div>
+              <div class="build-position-bullgate">
+                <div>
+                  <span>牛门线</span>
+                  <strong>${bullGate.levelText}</strong>
+                  <em>${bullGate.sourceText} · ${bullGate.distance}</em>
+                </div>
+                <div>
+                  <span>${bullGate.tone}</span>
+                  <strong>${bullGate.action}</strong>
+                  <em>${bullGate.risk}</em>
+                </div>
+              </div>
+              <p>${buildPositionReason(stock)}</p>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function recommendationList(stocks) {
   return `
     <div class="recommend-list">
@@ -2410,6 +2565,9 @@ function stockModal() {
 function stockDetailView(stock, advice) {
   const latest = advice.latest || {};
   const levels = advice.levels || {};
+  const bullGate = bullGateLine(stock.candles || []);
+  const latestBullGate = bullGate.at(-1);
+  const bullGateInfo = bullGateState(latest, latestBullGate);
   return `
     <section class="broker-quote">
       <div class="broker-main-price">
@@ -2441,6 +2599,7 @@ function stockDetailView(stock, advice) {
           <small>${advice.plan}</small>
         </div>
         ${adviceExplanationView(advice)}
+        ${bullGateExplanationView(latest, latestBullGate)}
         ${stockNewsPolicyView(stock)}
         <div class="chart-wrap interactive-chart">
           <div class="stock-chart-toolbar">
@@ -2478,6 +2637,7 @@ function stockDetailView(stock, advice) {
       ${indicatorCard("MACD", advice.checks?.[1]?.value, `DIF ${fmt(latest.dif, 3)} / DEA ${fmt(latest.dea, 3)} / 柱 ${fmt(latest.macdHist, 3)}`)}
       ${indicatorCard("SAR", advice.checks?.[2]?.value, `SAR ${fmt(latest.sar)}，${advice.checks?.[2]?.value || "--"}`)}
       ${indicatorCard("BOLL", advice.checks?.[3]?.value, `上 ${fmt(latest.bollUpper)} / 中 ${fmt(latest.bollMid)} / 下 ${fmt(latest.bollLower)}`)}
+      ${indicatorCard("牛门线", bullGateInfo.value, bullGateInfo.detail)}
       ${indicatorCard("主力", money(stock.mainFlow), `主力占比 ${fmt(stock.mainFlowPct)}% / 量 ${fmt(latest.volume, 0)}`)}
     </section>
   `;
@@ -2687,12 +2847,120 @@ function indicatorCard(title, value, detail) {
   return `<article class="card indicator-card"><span>${title}</span><strong>${value || "--"}</strong><small>${detail || "--"}</small></article>`;
 }
 
+function bullGateLine(candles = [], period = 20) {
+  return candles.map((_, index) => {
+    const rows = candles.slice(Math.max(0, index - period + 1), index + 1);
+    if (!rows.length) return null;
+    const closeAvg = rows.reduce((sum, row) => sum + Number(row.close || 0), 0) / rows.length;
+    const rangeAvg = rows.reduce((sum, row) => sum + Math.max(0, Number(row.high || 0) - Number(row.low || 0)), 0) / rows.length;
+    return closeAvg + rangeAvg * 0.38;
+  });
+}
+
+function bullGateState(latest = {}, gateValue) {
+  const close = Number(latest.close);
+  const gate = Number(gateValue);
+  if (!Number.isFinite(close) || !Number.isFinite(gate)) return { value: "--", detail: "等待 K 线补齐" };
+  const diffPct = gate ? ((close - gate) / gate) * 100 : 0;
+  if (close >= gate) {
+    return {
+      value: "站上牛门",
+      detail: `牛门线 ${fmt(gate)}，收盘高 ${fmt(Math.abs(diffPct))}%`
+    };
+  }
+  return {
+    value: "门下等待",
+    detail: `牛门线 ${fmt(gate)}，还差 ${fmt(Math.abs(diffPct))}%`
+  };
+}
+
+function bullGateExplanation(latest = {}, gateValue) {
+  const close = Number(latest.close);
+  const gate = Number(gateValue);
+  if (!Number.isFinite(close) || !Number.isFinite(gate)) {
+    return {
+      tone: "等待数据",
+      status: "K 线未补齐，暂不使用牛门线做交易判断。",
+      distance: "--",
+      action: "先等待 K 线、BOLL、SAR 和 MACD 数据同步完成。",
+      risk: "数据不完整时不要因为单一报价变化追买。",
+      tags: ["等待K线", "不追价", "先看共振"]
+    };
+  }
+  const diff = close - gate;
+  const diffPct = gate ? (diff / gate) * 100 : 0;
+  const abs = Math.abs(diffPct);
+  if (diffPct >= 3) {
+    return {
+      tone: "强势门上",
+      status: `收盘价 ${fmt(close)} 明显站上牛门线 ${fmt(gate)}，趋势门槛已打开，但短线已有 ${fmt(abs)}% 的门上溢价。`,
+      distance: `+${fmt(diffPct)}%`,
+      action: "已有仓位可继续持有，新增仓位不要一次打满，等回踩不破牛门线或 MACD 柱继续扩张再加。",
+      risk: `若放量跌回 ${fmt(gate)} 下方，说明强势确认失败，短线仓位先降一档。`,
+      tags: ["趋势偏强", "不宜追满", "回踩确认"]
+    };
+  }
+  if (diffPct >= 0) {
+    return {
+      tone: "刚过牛门",
+      status: `收盘价 ${fmt(close)} 刚站上牛门线 ${fmt(gate)}，这是较好的试仓区，关键是下一根 K 线不能快速跌回门下。`,
+      distance: `+${fmt(diffPct)}%`,
+      action: "可用 1-2 成试仓；若回踩牛门线不破并重新拉起，再分批提高到计划仓位。",
+      risk: `收盘重新跌破 ${fmt(gate)}，或 SAR 翻空、MACD 柱缩短时，试仓应撤回观察。`,
+      tags: ["试仓区", "等确认", "分批加"]
+    };
+  }
+  if (diffPct >= -2) {
+    return {
+      tone: "门下临界",
+      status: `收盘价 ${fmt(close)} 位于牛门线 ${fmt(gate)} 下方 ${fmt(abs)}%，离转强只差一步，但还没有完成确认。`,
+      distance: `-${fmt(abs)}%`,
+      action: "适合放入观察池，等放量站上牛门线再买；激进做法只允许小仓低吸，不能越跌越补。",
+      risk: "若继续弱于 BOLL 中轨且 MACD 走弱，说明门下压力仍在，建仓顺延。",
+      tags: ["观察位", "等突破", "小仓试错"]
+    };
+  }
+  return {
+    tone: "门下偏弱",
+    status: `收盘价 ${fmt(close)} 距牛门线 ${fmt(gate)} 仍有 ${fmt(abs)}% 差距，当前不是主动建仓的舒服位置。`,
+    distance: `-${fmt(abs)}%`,
+    action: "先不追求买入，等价格收复牛门线或出现放量长阳再重新评估。",
+    risk: "门下运行时，反弹更容易变成卖压释放；若持仓较重，反弹到牛门线附近反而要检查是否减仓。",
+    tags: ["偏弱", "不主动建仓", "反弹看压"]
+  };
+}
+
+function bullGateExplanationView(latest = {}, gateValue) {
+  const info = bullGateExplanation(latest, gateValue);
+  return `
+    <section class="bullgate-explain">
+      <div class="bullgate-explain-head">
+        <div>
+          <span>牛门线解读</span>
+          <strong>${info.tone}</strong>
+        </div>
+        <div>
+          <span>距离牛门</span>
+          <strong class="${String(info.distance).startsWith("+") ? "up" : String(info.distance).startsWith("-") ? "down" : ""}">${info.distance}</strong>
+        </div>
+      </div>
+      <p>${info.status}</p>
+      <div class="bullgate-playbook">
+        <div><span>操作</span><strong>${info.action}</strong></div>
+        <div><span>风控</span><strong>${info.risk}</strong></div>
+      </div>
+      <div class="bullgate-tags">${info.tags.map((tag) => `<span>${tag}</span>`).join("")}</div>
+    </section>
+  `;
+}
+
 function stockChartIndicatorControls() {
   const indicators = state.stockChartIndicators || {};
   const items = [
     ["kline", "K", "K线", "显示/隐藏 K 线"],
     ["boll", "B", "BOLL", "显示/隐藏 BOLL"],
     ["sar", "S", "SAR", "显示/隐藏 SAR"],
+    ["bullgate", "门", "牛门线", "显示/隐藏 牛门线"],
     ["macd", "M", "MACD", "显示/隐藏 MACD"]
   ];
   return `
@@ -2709,12 +2977,14 @@ function stockChartIndicatorControls() {
 function stockChartLegend() {
   const indicators = state.stockChartIndicators || {};
   const showMacd = indicators.macd !== false;
+  const showBullGate = indicators.bullgate !== false;
   const items = [
     { className: "k-up", label: "红K", text: "收盘高于开盘" },
     { className: "k-down", label: "绿K", text: "收盘低于开盘" },
     { className: "boll-upper", label: "BOLL上/下轨", text: "压力与支撑边界" },
     { className: "boll-mid", label: "BOLL中轨", text: "趋势均衡线" },
     { className: "sar", label: "SAR", text: "止损/反转参考点" },
+    showBullGate ? { className: "bullgate", label: "牛门线", text: "多头确认门槛" } : null,
     showMacd ? { className: "macd-dif", label: "DIF", text: "快线" } : null,
     showMacd ? { className: "macd-dea", label: "DEA", text: "慢线" } : null,
     showMacd ? { className: "macd-hist", label: "柱", text: "红强绿弱" } : null
@@ -2747,6 +3017,7 @@ function drawStockChart(stock) {
   const showKline = indicators.kline !== false;
   const showBoll = indicators.boll !== false;
   const showSar = indicators.sar !== false;
+  const showBullGate = indicators.bullgate !== false;
   const showMacd = indicators.macd !== false;
   const dpr = window.devicePixelRatio || 1;
   canvas.width = rect.width * dpr;
@@ -2759,6 +3030,7 @@ function drawStockChart(stock) {
   const offset = stock.candles.length - candles.length;
   const boll = advice.boll.slice(offset);
   const sar = advice.sar.slice(offset);
+  const bullGate = bullGateLine(stock.candles).slice(offset);
   const hist = advice.macd.hist.slice(offset);
   const dif = advice.macd.dif.slice(offset);
   const dea = advice.macd.dea.slice(offset);
@@ -2779,6 +3051,10 @@ function drawStockChart(stock) {
   if (showSar) {
     highs.push(...sar);
     lows.push(...sar);
+  }
+  if (showBullGate) {
+    highs.push(...bullGate.filter((value) => Number.isFinite(Number(value))));
+    lows.push(...bullGate.filter((value) => Number.isFinite(Number(value))));
   }
   const max = Math.max(...highs);
   const min = Math.min(...lows);
@@ -2834,6 +3110,9 @@ function drawStockChart(stock) {
       ctx.arc(x, y(value), 2.1, 0, Math.PI * 2);
       ctx.fill();
     });
+  }
+  if (showBullGate) {
+    drawLine(ctx, bullGate, "#2ee6d6", y, pad.l, xStep, { dash: [6, 4], width: 1.9 });
   }
   const hMax = Math.max(...hist.map(Math.abs), 0.01);
   if (showMacd) {
@@ -2909,7 +3188,7 @@ function drawStockChart(stock) {
     ctx.font = "11px system-ui";
     ctx.fillText(fmt(pointerPrice), chartRight + 9, pointer.y + 4);
     ctx.restore();
-    updateStockChartTip(tip, pointer, candle, pointerPrice, showBoll ? boll[index] : null, showSar ? sar[index] : null, rect, tipOffset);
+    updateStockChartTip(tip, pointer, candle, pointerPrice, showBoll ? boll[index] : null, showSar ? sar[index] : null, showBullGate ? bullGate[index] : null, rect, tipOffset);
   } else if (tip) {
     tip.classList.remove("show");
   }
@@ -2918,7 +3197,8 @@ function drawStockChart(stock) {
     showKline ? { color: "#00b070", label: "绿K 空方" } : null,
     showBoll ? { color: "#f2b84b", label: "BOLL上/下轨" } : null,
     showBoll ? { color: "#54a3ff", label: "BOLL中轨" } : null,
-    showSar ? { color: "#d184ff", label: "SAR反转点", dot: true } : null
+    showSar ? { color: "#d184ff", label: "SAR反转点", dot: true } : null,
+    showBullGate ? { color: "#2ee6d6", label: "牛门线" } : null
   ].filter(Boolean));
 }
 
@@ -2982,7 +3262,7 @@ function normalizeStockPointer(pointer, rect, pad, mainH, candleCount) {
   };
 }
 
-function updateStockChartTip(tip, pointer, candle, price, boll, sar, rect, offset = { x: 0, y: 0 }) {
+function updateStockChartTip(tip, pointer, candle, price, boll, sar, bullGate, rect, offset = { x: 0, y: 0 }) {
   if (!tip || !candle) return;
   const left = pointer.x > rect.width * 0.62 ? pointer.x - 172 : pointer.x + 12;
   const top = pointer.y > rect.height * 0.52 ? pointer.y - 122 : pointer.y + 12;
@@ -2996,22 +3276,31 @@ function updateStockChartTip(tip, pointer, candle, price, boll, sar, rect, offse
     <span>低 ${fmt(candle.low)} 收 ${fmt(candle.close)}</span>
     <span>BOLL ${fmt(boll?.upper)} / ${fmt(boll?.mid)} / ${fmt(boll?.lower)}</span>
     <span>SAR ${fmt(sar)}</span>
+    <span>牛门线 ${fmt(bullGate)}</span>
   `;
   tip.classList.add("show");
 }
 
-function drawLine(ctx, values, color, y, left, step) {
+function drawLine(ctx, values, color, y, left, step, options = {}) {
   if (!values.length) return;
+  ctx.save();
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1.7;
+  ctx.lineWidth = options.width || 1.7;
+  if (options.dash) ctx.setLineDash(options.dash);
   ctx.beginPath();
+  let started = false;
   values.forEach((value, i) => {
+    if (!Number.isFinite(Number(value))) return;
     const x = left + i * step + step / 2;
     const yy = y(value);
-    if (i === 0) ctx.moveTo(x, yy);
+    if (!started) {
+      ctx.moveTo(x, yy);
+      started = true;
+    }
     else ctx.lineTo(x, yy);
   });
   ctx.stroke();
+  ctx.restore();
 }
 
 function drawIndexChart(index) {
