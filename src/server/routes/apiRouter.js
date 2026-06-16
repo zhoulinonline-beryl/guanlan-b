@@ -31,7 +31,8 @@ function createApiRouter(deps) {
     getIndices,
     getIndexKline,
     getStocks,
-    getStockKline
+    getStockKline,
+    getStockProfile
   } = deps;
 
   const routes = [
@@ -51,6 +52,7 @@ function createApiRouter(deps) {
         advisorModel: body.advisorModel,
         advisorRole: body.advisorRole,
         advisorStyle: body.advisorStyle,
+        modelQpm: body.modelQpm,
         marketDataSource: body.marketDataSource,
         apiKey: String(body.apiKey || body.kimiApiKey || "").trim() ? (body.apiKey || body.kimiApiKey) : "__KEEP__",
         useCache: body.useCache
@@ -79,9 +81,10 @@ function createApiRouter(deps) {
         return { handled: true };
       }
     }],
-    ["GET", "/api/holdings", async () => {
+    ["GET", "/api/holdings", async ({ url }) => {
       const store = readHoldingsStore();
-      const data = await analyzeHoldings(store.holdings, { parser: store.holdings.length ? "saved+ai" : "saved", withNews: true });
+      const withNews = url.searchParams.get("news") === "1";
+      const data = await analyzeHoldings(store.holdings, { parser: store.holdings.length ? (withNews ? "saved+ai" : "saved+fast") : "saved", withNews });
       return { data: { ...data, savedAt: store.updatedAt } };
     }],
     ["POST", "/api/holdings/import-image", async ({ req }) => {
@@ -89,14 +92,14 @@ function createApiRouter(deps) {
       const parsed = await parseHoldingsImageWithKimi(body.imageData || "");
       const enriched = await enrichParsedHoldings(parsed);
       const store = writeHoldingsStore(enriched);
-      const data = await analyzeHoldings(store.holdings, { parser: "ai-ocr", withNews: true });
+      const data = await analyzeHoldings(store.holdings, { parser: "ai-ocr", withNews: false });
       return { data: { ...data, savedAt: store.updatedAt } };
     }],
     ["POST", "/api/holdings/import-text", async ({ req }) => {
       const body = await readJsonBody(req);
       const parsed = await parsePortfolioHoldings(body.text || "");
       const store = writeHoldingsStore(parsed);
-      const data = await analyzeHoldings(store.holdings, { parser: hasAiKey() ? "ai+rules" : "rules", withNews: true });
+      const data = await analyzeHoldings(store.holdings, { parser: hasAiKey() ? "ai+rules" : "rules", withNews: false });
       return { data: { ...data, savedAt: store.updatedAt } };
     }],
     ["DELETE", "/api/holdings", async () => {
@@ -113,6 +116,13 @@ function createApiRouter(deps) {
       const name = url.searchParams.get("name");
       if (!code) throw new Error("缺少 code 参数");
       const data = await getStockNews(code, name, 10);
+      return { data };
+    }],
+    ["GET", "/api/profile", async ({ url }) => {
+      const code = url.searchParams.get("code");
+      const name = url.searchParams.get("name");
+      if (!code) throw new Error("缺少 code 参数");
+      const data = await getStockProfile(code, Number(url.searchParams.get("market") || marketOf(code)), name);
       return { data };
     }],
     ["GET", "/api/recommendations", async ({ url }) => {

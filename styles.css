@@ -1233,22 +1233,93 @@ button {
   background: #09131c;
 }
 
+.interactive-chart {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .interactive-chart canvas {
   cursor: crosshair;
   touch-action: none;
 }
 
-.stock-chart-legend {
-  position: absolute;
-  z-index: 1;
-  top: 8px;
-  left: 12px;
-  right: 12px;
+.stock-chart-toolbar {
+  min-width: 0;
   display: flex;
   align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(32, 53, 67, 0.74);
+  background: linear-gradient(180deg, rgba(13, 28, 40, 0.96), rgba(8, 19, 28, 0.9));
+}
+
+.stock-chart-canvas {
+  position: relative;
+  min-height: 0;
+}
+
+.stock-chart-legend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-wrap: wrap;
   gap: 7px;
-  pointer-events: none;
+  min-width: 0;
+}
+
+.stock-chart-controls {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid rgba(32, 53, 67, 0.82);
+  border-radius: 8px;
+  background: rgba(7, 16, 24, 0.82);
+  backdrop-filter: blur(8px);
+  max-width: 100%;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+}
+
+.stock-chart-controls button {
+  min-height: 26px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+
+.stock-chart-controls button.active {
+  border-color: rgba(84, 163, 255, 0.28);
+  background: rgba(84, 163, 255, 0.12);
+  color: #dceeff;
+}
+
+.stock-chart-controls i {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.07);
+  color: inherit;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.stock-chart-controls span {
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .stock-chart-legend span {
@@ -1258,11 +1329,10 @@ button {
   min-height: 22px;
   border: 1px solid rgba(32, 53, 67, 0.8);
   border-radius: 6px;
-  background: rgba(7, 16, 24, 0.78);
+  background: rgba(7, 16, 24, 0.56);
   padding: 3px 7px;
   color: #b7c8d4;
   font-size: 11px;
-  backdrop-filter: blur(8px);
 }
 
 .stock-chart-legend i {
@@ -1307,6 +1377,24 @@ button {
 
 .stock-chart-legend .sar {
   color: var(--violet);
+}
+
+.stock-chart-legend .macd-dif {
+  color: var(--blue);
+}
+
+.stock-chart-legend .macd-dea {
+  color: var(--amber);
+}
+
+.stock-chart-legend .macd-hist {
+  color: var(--red);
+}
+
+.stock-chart-legend .macd-hist i {
+  height: 10px;
+  border: 0;
+  background: linear-gradient(90deg, var(--red) 0 42%, transparent 42% 58%, var(--green) 58% 100%);
 }
 
 .chart-tip {
@@ -1545,6 +1633,34 @@ button {
   color: #c8d5de;
   font-size: 13px;
   line-height: 1.62;
+}
+
+.stock-business-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stock-business-grid div {
+  min-width: 0;
+  border: 1px solid rgba(84, 163, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(5, 15, 23, 0.54);
+  padding: 10px 11px;
+}
+
+.stock-business-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.stock-business-grid strong {
+  display: block;
+  margin-top: 5px;
+  color: #e2eef6;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .stock-profile-tags {
@@ -2373,7 +2489,7 @@ button {
   gap: 12px;
   align-items: start;
   width: 100%;
-  max-width: 960px;
+  max-width: 1180px;
   min-width: 0;
 }
 
@@ -2384,22 +2500,57 @@ button {
 }
 
 .settings-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #09131c;
   padding: 10px;
 }
 
-.settings-summary span {
-  border: 1px solid rgba(84, 163, 255, 0.18);
-  border-radius: 999px;
-  background: rgba(84, 163, 255, 0.08);
-  color: #dce8ef;
-  padding: 5px 9px;
+.settings-summary-card {
+  min-width: 0;
+  border: 1px solid rgba(84, 163, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(84, 163, 255, 0.06);
+  padding: 10px;
+  display: grid;
+  gap: 5px;
+}
+
+.settings-summary-card span {
+  color: var(--muted);
   font-size: 12px;
+}
+
+.settings-summary-card strong {
+  color: #f4fbff;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-content-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+}
+
+.settings-main-column,
+.settings-side-column {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-side-column {
+  position: sticky;
+  top: 12px;
 }
 
 .settings-section {
@@ -2410,6 +2561,11 @@ button {
   display: grid;
   gap: 8px;
   min-width: 0;
+}
+
+.settings-section-primary {
+  border-color: rgba(84, 163, 255, 0.22);
+  background: linear-gradient(180deg, rgba(10, 25, 38, 0.9), rgba(9, 19, 28, 0.72));
 }
 
 .settings-section-title {
@@ -2438,6 +2594,12 @@ button {
   align-items: center;
   border-bottom: 1px solid rgba(255, 255, 255, 0.045);
   padding: 9px 0;
+}
+
+.side-setting-row {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  gap: 8px;
 }
 
 .setting-row:last-child {
@@ -2553,7 +2715,11 @@ button {
   background: #09131c;
   padding: 12px;
   display: flex;
-  justify-content: flex-end;
+  justify-content: stretch;
+}
+
+.settings-actions .primary {
+  width: 100%;
 }
 
 .discussion-layout {
@@ -2607,7 +2773,7 @@ button {
 .chat-message {
   display: grid;
   gap: 5px;
-  max-width: 78%;
+  max-width: 82%;
 }
 
 .chat-message.user {
@@ -2624,9 +2790,15 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 8px;
   background: #0b1721;
-  padding: 10px 12px;
+  padding: 12px 13px;
   line-height: 1.6;
   overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.chat-message.assistant .chat-bubble {
+  background: linear-gradient(180deg, rgba(13, 28, 40, 0.96), rgba(9, 19, 29, 0.96));
+  border-color: rgba(116, 195, 255, 0.12);
 }
 
 .chat-message.user .chat-bubble {
@@ -2663,6 +2835,58 @@ button {
   padding-left: 18px;
 }
 
+.chat-bubble h4,
+.chat-bubble h5,
+.chat-bubble h6 {
+  color: #f5fbff;
+  line-height: 1.35;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.chat-bubble h4 {
+  position: relative;
+  margin-top: 3px;
+  padding-left: 10px;
+  font-size: 16px;
+}
+
+.chat-bubble h4::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.24em;
+  bottom: 0.24em;
+  width: 3px;
+  border-radius: 999px;
+  background: #54a3ff;
+}
+
+.chat-bubble h5 {
+  font-size: 14.5px;
+  color: #dceeff;
+}
+
+.chat-bubble h6 {
+  font-size: 13.5px;
+  color: #cfe4f3;
+}
+
+.chat-bubble h4:not(:first-child),
+.chat-bubble h5:not(:first-child),
+.chat-bubble h6:not(:first-child) {
+  margin-top: 12px;
+}
+
+.chat-bubble p {
+  color: #d9e5ec;
+}
+
+.chat-bubble strong {
+  color: #f7fbff;
+  font-weight: 800;
+}
+
 .chat-bubble li + li {
   margin-top: 4px;
 }
@@ -2670,6 +2894,8 @@ button {
 .chat-bubble blockquote {
   border-left: 3px solid #54a3ff;
   color: var(--muted);
+  background: rgba(84, 163, 255, 0.055);
+  border-radius: 0 7px 7px 0;
   padding-left: 10px;
 }
 
@@ -3206,6 +3432,10 @@ canvas {
     text-align: left;
   }
 
+  .stock-business-grid {
+    grid-template-columns: 1fr;
+  }
+
   .stock-news-head small {
     text-align: left;
   }
@@ -3252,12 +3482,15 @@ canvas {
   }
 
   .settings-summary {
-    align-items: stretch;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .settings-summary span {
-    flex: 1 1 120px;
-    text-align: center;
+  .settings-content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-side-column {
+    position: static;
   }
 
   .setting-row {
@@ -3354,6 +3587,21 @@ canvas {
     height: 420px;
   }
 
+  .stock-chart-controls {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .stock-chart-toolbar {
+    justify-content: flex-start;
+    padding: 9px;
+    gap: 7px;
+  }
+
+  .stock-chart-legend {
+    justify-content: flex-start;
+  }
+
   .index-chart-wrap {
     height: 300px;
   }
@@ -3398,6 +3646,10 @@ canvas {
 @media (max-width: 420px) {
   :root {
     font-size: 14px;
+  }
+
+  .settings-summary {
+    grid-template-columns: 1fr;
   }
 
   .nav button span {

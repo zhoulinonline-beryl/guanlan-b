@@ -2,6 +2,7 @@ import { sectorReasons, stockAdvice } from "./analytics.js";
 
 const app = document.querySelector("#app");
 let stockChartPointer = null;
+let stockChartDrawFrame = 0;
 let skipAdvisorFocusRestoreOnce = false;
 let advisorAbortController = null;
 let advisorStreamTimer = null;
@@ -46,6 +47,7 @@ const state = {
   modalPortfolioUpdate: false,
   modalSectorId: "",
   modalStockSort: "mainFlow",
+  stockChartIndicators: { kline: true, boll: true, sar: true, macd: true },
   modalStock: null,
   modalIndex: null,
   loading: true,
@@ -69,6 +71,9 @@ const cnMarketClosedDates2026 = new Set([
 ]);
 let sectorStockIndexQueueRunning = false;
 let pendingAutoRefresh = new Set();
+let pendingScrollAnchor = null;
+let scrollGeneration = 0;
+let suppressScrollTracking = false;
 
 const icons = {
   home: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/></svg>`,
@@ -83,11 +88,107 @@ const icons = {
 };
 
 function update(patch) {
+  const scrollAnchor = pendingScrollAnchor?.page === state.page ? pendingScrollAnchor : captureScrollAnchors();
   if (Object.prototype.hasOwnProperty.call(patch, "advisorInput") && patch.advisorInput === "") {
     skipAdvisorFocusRestoreOnce = true;
   }
   Object.assign(state, patch);
-  render();
+  render(scrollAnchor);
+}
+
+function clampScroll(value, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(Math.max(0, n), Math.max(0, max));
+}
+
+function captureScrollable(selector, identity = "") {
+  const el = document.querySelector(selector);
+  if (!el) return null;
+  return {
+    selector,
+    identity,
+    top: el.scrollTop,
+    left: el.scrollLeft
+  };
+}
+
+function restoreScrollable(anchor) {
+  if (!anchor) return;
+  const el = document.querySelector(anchor.selector);
+  if (!el) return;
+  el.scrollTop = clampScroll(anchor.top, el.scrollHeight - el.clientHeight);
+  el.scrollLeft = clampScroll(anchor.left, el.scrollWidth - el.clientWidth);
+}
+
+function captureScrollAnchors() {
+  return {
+    page: state.page,
+    generation: scrollGeneration,
+    window: {
+      x: window.scrollX || document.documentElement.scrollLeft || 0,
+      y: window.scrollY || document.documentElement.scrollTop || 0
+    },
+    stock: captureScrollable("#stockOverlay.open .drawer-body", state.modalStock?.code || ""),
+    sector: captureScrollable("#sectorOverlay.open .drawer-body", state.modalSectorId || ""),
+    index: captureScrollable("#indexOverlay.open .drawer-body", state.modalIndex?.id || ""),
+    portfolioUpdate: captureScrollable("#portfolioUpdateOverlay.open .mini-dialog", state.modalPortfolioUpdate ? "open" : ""),
+    chat: captureScrollable(".chat-thread", state.page === "discussion" ? "discussion" : "")
+  };
+}
+
+function restoreScrollAnchors(anchor) {
+  if (!anchor) return;
+  const restore = () => {
+    if (anchor.page === state.page) {
+      const maxWindowY = document.documentElement.scrollHeight - window.innerHeight;
+      const targetY = Number(anchor.window?.y || 0);
+      const currentY = window.scrollY || document.documentElement.scrollTop || 0;
+      if (targetY <= 0 && currentY > 20 && pendingScrollAnchor !== anchor) return;
+      if (targetY > 0) pendingScrollAnchor = anchor;
+      window.scrollTo({
+        left: clampScroll(anchor.window?.x, document.documentElement.scrollWidth - window.innerWidth),
+        top: clampScroll(targetY, maxWindowY),
+        behavior: "auto"
+      });
+      const actualY = window.scrollY || document.documentElement.scrollTop || 0;
+      if (targetY <= 0 || (maxWindowY >= targetY - 4 && Math.abs(actualY - targetY) < 16)) {
+        pendingScrollAnchor = null;
+      }
+    }
+    if (anchor.stock?.identity === (state.modalStock?.code || "")) restoreScrollable(anchor.stock);
+    if (anchor.sector?.identity === (state.modalSectorId || "")) restoreScrollable(anchor.sector);
+    if (anchor.index?.identity === (state.modalIndex?.id || "")) restoreScrollable(anchor.index);
+    if (anchor.portfolioUpdate?.identity === (state.modalPortfolioUpdate ? "open" : "")) restoreScrollable(anchor.portfolioUpdate);
+    if (anchor.chat?.identity === (state.page === "discussion" ? "discussion" : "")) restoreScrollable(anchor.chat);
+  };
+  restore();
+  requestAnimationFrame(restore);
+  setTimeout(restore, 80);
+}
+
+function captureStockModalScroll() {
+  const overlay = document.querySelector("#stockOverlay.open");
+  const body = overlay?.querySelector(".drawer-body");
+  if (!overlay || !body) return null;
+  return {
+    code: overlay.dataset.stockCode || "",
+    top: body.scrollTop,
+    left: body.scrollLeft
+  };
+}
+
+function restoreStockModalScroll(anchor) {
+  if (!anchor || !state.modalStock || anchor.code !== state.modalStock.code) return;
+  const apply = () => {
+    const overlay = document.querySelector("#stockOverlay.open");
+    const body = overlay?.querySelector(".drawer-body");
+    if (!overlay || !body || overlay.dataset.stockCode !== anchor.code) return;
+    body.scrollTop = Math.min(anchor.top, Math.max(0, body.scrollHeight - body.clientHeight));
+    body.scrollLeft = anchor.left;
+  };
+  apply();
+  requestAnimationFrame(apply);
 }
 
 function captureAdvisorFocus() {
@@ -621,9 +722,10 @@ async function openStock(code) {
   stockChartPointer = null;
   update({ modalStock: { ...stock, candles: [], news: [], newsLoading: true, newsError: "" } });
   const newsName = encodeURIComponent(stock.name || "");
-  const [klineResult, newsResult] = await Promise.allSettled([
+  const [klineResult, newsResult, profileResult] = await Promise.allSettled([
     api(`/api/kline?code=${stock.code}&market=${stock.market}`),
-    api(`/api/news?code=${stock.code}&name=${newsName}`)
+    api(`/api/news?code=${stock.code}&name=${newsName}`),
+    api(`/api/profile?code=${stock.code}&market=${stock.market}&name=${newsName}`)
   ]);
   if (state.modalStock?.code !== stock.code) return;
   const nextStock = { ...state.modalStock, newsLoading: false };
@@ -639,6 +741,12 @@ async function openStock(code) {
   } else {
     nextStock.news = [];
     nextStock.newsError = newsResult.reason?.message || "新闻获取失败";
+  }
+  if (profileResult.status === "fulfilled") {
+    nextStock.profile = profileResult.value.data || null;
+  } else {
+    nextStock.profile = null;
+    nextStock.profileError = profileResult.reason?.message || "公司资料获取失败";
   }
   update({ modalStock: nextStock, updatedAt });
 }
@@ -726,7 +834,7 @@ function applyPortfolioPayload(payload = {}, updatedAt = "", progress = "") {
 async function loadHoldings({ silent = false } = {}) {
   if (!silent) update({ portfolioLoading: true, error: "" });
   try {
-    const json = await api("/api/holdings");
+    const json = await api("/api/holdings?fast=1");
     applyPortfolioPayload(json.data, json.updatedAt, silent ? state.ocrProgress : "");
   } catch (error) {
     update({ portfolioLoading: false, error: error.message });
@@ -785,7 +893,7 @@ async function loadSettings() {
 }
 
 async function saveSettings() {
-  const draft = state.settingsDraft || {};
+  const draft = collectSettingsDraft();
   update({ settingsSaving: true, error: "" });
   try {
     const res = await fetch("/api/settings", {
@@ -803,6 +911,7 @@ async function saveSettings() {
         advisorModel: draft.advisorModel,
         advisorRole: draft.advisorRole,
         advisorStyle: draft.advisorStyle,
+        modelQpm: draft.modelQpm,
         marketDataSource: draft.marketDataSource,
         apiKey: draft.apiKey || draft.kimiApiKey || "",
         useCache: draft.useCache
@@ -815,6 +924,17 @@ async function saveSettings() {
   } catch (error) {
     update({ settingsSaving: false, error: error.message });
   }
+}
+
+function collectSettingsDraft() {
+  const draft = { ...(state.settingsDraft || {}) };
+  document.querySelectorAll("[data-setting]").forEach((field) => {
+    const key = field.dataset.setting;
+    if (!key) return;
+    draft[key] = field.type === "checkbox" ? field.checked : field.value;
+  });
+  state.settingsDraft = draft;
+  return draft;
 }
 
 async function sendAdvisorMessage(contentOverride = "") {
@@ -1869,93 +1989,116 @@ function settingsPage() {
     <section class="settings-layout">
       <div class="panel settings-panel">
         <div class="settings-summary">
-          <span>${draft.aiProviderLabel || providerInfo.label || "模型"} · AK ${draft.hasApiKey || draft.hasKimiApiKey ? "已配置" : "未配置"}</span>
-          <span>行情源 ${marketSourceOptions.find(([key]) => key === (draft.marketDataSource || "auto"))?.[1] || "自动兜底"}</span>
-          <span>缓存 ${draft.useCache !== false ? "开启" : "关闭"}</span>
+          <div class="settings-summary-card">
+            <span>调用模型</span>
+            <strong>${draft.aiProviderLabel || providerInfo.label || "模型"}</strong>
+          </div>
+          <div class="settings-summary-card">
+            <span>AK 状态</span>
+            <strong>${draft.hasApiKey || draft.hasKimiApiKey ? "已配置" : "未配置"}</strong>
+          </div>
+          <div class="settings-summary-card">
+            <span>QPM</span>
+            <strong>${Number(draft.modelQpm || 500)}/分钟</strong>
+          </div>
+          <div class="settings-summary-card">
+            <span>缓存</span>
+            <strong>${draft.useCache !== false ? "开启" : "关闭"}</strong>
+          </div>
         </div>
-        <section class="settings-section">
-          <div class="settings-section-title">
-            <h2>调用模型</h2>
-            <span>选择 Kimi 国内版/国际版、DeepSeek、MiniMax 或 GLM，并填写对应 AK；API 地址可手工修改。</span>
+        <div class="settings-content-grid">
+          <div class="settings-main-column">
+            <section class="settings-section settings-section-primary">
+              <div class="settings-section-title">
+                <h2>调用模型</h2>
+                <span>模型、地址和 AK</span>
+              </div>
+              <label class="setting-row">
+                <span><strong>模型供应商</strong><small>保存后立即切换底层调用</small></span>
+                <select data-setting="aiProvider">
+                  ${providerOptions.map(([key, item]) => `<option value="${key}" ${provider === key ? "selected" : ""}>${item.label || key}</option>`).join("")}
+                </select>
+              </label>
+              <label class="setting-row">
+                <span><strong>文本模型</strong><small>新闻、推荐、持股分析</small></span>
+                <select data-setting="textModel">
+                  ${modelOptions.map((item) => `<option value="${item}" ${(draft.textModel || providerInfo.textModel) === item ? "selected" : ""}>${item}</option>`).join("")}
+                </select>
+              </label>
+              <label class="setting-row">
+                <span><strong>OCR 模型</strong><small>${providerInfo.supportsVision === false ? "当前供应商未默认启用视觉能力" : "识别持股截图"}</small></span>
+                <select data-setting="visionModel">
+                  ${visionOptions.length ? visionOptions.map((item) => `<option value="${item}" ${(draft.visionModel || providerInfo.visionModel) === item ? "selected" : ""}>${item}</option>`).join("") : `<option value="">不启用 OCR 模型</option>`}
+                </select>
+              </label>
+              <label class="setting-row setting-row-wide setting-url-row">
+                <span><strong>API 地址</strong><small>Chat Completions</small></span>
+                <input class="setting-url-input" data-setting="apiUrl" value="${escapeHtml(currentApiUrl)}" placeholder="${escapeHtml(providerInfo.apiUrl || "https://.../chat/completions")}" title="${escapeHtml(currentApiUrl)}" spellcheck="false" autocomplete="off" />
+                <div class="setting-url-current">
+                  <span>当前已设置</span>
+                  <code>${escapeHtml(currentApiUrl || "未设置")}</code>
+                </div>
+              </label>
+              <label class="setting-row">
+                <span><strong>${providerInfo.label || "模型"} AK</strong><small>留空则保留原 AK</small></span>
+                <input type="password" data-setting="apiKey" value="${escapeHtml(draft.apiKey || "")}" placeholder="${draft.hasApiKey || draft.hasKimiApiKey ? `已保存 ${draft.apiKeyMasked || draft.kimiApiKeyMasked}` : "请输入当前供应商 API Key"}" autocomplete="off" />
+              </label>
+            </section>
+            <section class="settings-section">
+              <div class="settings-section-title">
+                <h2>观澜理财师</h2>
+                <span>角色、模型和回答风格</span>
+              </div>
+              <label class="setting-row">
+                <span><strong>理财师模型</strong><small>个股/板块对话</small></span>
+                <select data-setting="advisorModel">
+                  ${advisorOptions.map((item) => `<option value="${item}" ${draft.advisorModel === item ? "selected" : ""}>${item}</option>`).join("")}
+                </select>
+              </label>
+              <label class="setting-row setting-row-wide">
+                <span><strong>角色定义</strong><small>智能体身份</small></span>
+                <textarea data-setting="advisorRole" rows="5">${escapeHtml(draft.advisorRole || "")}</textarea>
+              </label>
+              <label class="setting-row setting-row-wide">
+                <span><strong>对话风格</strong><small>激进程度与篇幅</small></span>
+                <textarea data-setting="advisorStyle" rows="4">${escapeHtml(draft.advisorStyle || "")}</textarea>
+              </label>
+            </section>
           </div>
-          <label class="setting-row">
-            <span><strong>模型供应商</strong><small>保存后立即切换底层调用</small></span>
-            <select data-setting="aiProvider">
-              ${providerOptions.map(([key, item]) => `<option value="${key}" ${provider === key ? "selected" : ""}>${item.label || key}</option>`).join("")}
-            </select>
-          </label>
-          <label class="setting-row">
-            <span><strong>文本模型</strong><small>新闻、推荐、持股分析</small></span>
-            <select data-setting="textModel">
-              ${modelOptions.map((item) => `<option value="${item}" ${(draft.textModel || providerInfo.textModel) === item ? "selected" : ""}>${item}</option>`).join("")}
-            </select>
-          </label>
-          <label class="setting-row">
-            <span><strong>OCR 模型</strong><small>${providerInfo.supportsVision === false ? "当前供应商未默认启用视觉能力" : "识别持股截图"}</small></span>
-            <select data-setting="visionModel">
-              ${visionOptions.length ? visionOptions.map((item) => `<option value="${item}" ${(draft.visionModel || providerInfo.visionModel) === item ? "selected" : ""}>${item}</option>`).join("") : `<option value="">不启用 OCR 模型</option>`}
-            </select>
-          </label>
-          <label class="setting-row setting-row-wide setting-url-row">
-            <span><strong>API 地址</strong><small>Chat Completions</small></span>
-            <input class="setting-url-input" data-setting="apiUrl" value="${escapeHtml(currentApiUrl)}" placeholder="${escapeHtml(providerInfo.apiUrl || "https://.../chat/completions")}" title="${escapeHtml(currentApiUrl)}" spellcheck="false" autocomplete="off" />
-            <div class="setting-url-current">
-              <span>当前已设置</span>
-              <code>${escapeHtml(currentApiUrl || "未设置")}</code>
+          <aside class="settings-side-column">
+            <section class="settings-section">
+              <div class="settings-section-title">
+                <h2>运行策略</h2>
+                <span>节流和缓存</span>
+              </div>
+              <label class="setting-row side-setting-row">
+                <span><strong>模型调用 QPM</strong><small>每分钟最多启动的模型请求数</small></span>
+                <input type="number" data-setting="modelQpm" value="${Number(draft.modelQpm || 500)}" min="1" max="1000" step="1" inputmode="numeric" />
+              </label>
+              <label class="setting-row toggle-row">
+                <span>
+                  <strong>使用缓存</strong>
+                  <small>复用历史行情、新闻和模型结果</small>
+                </span>
+                <input type="checkbox" data-setting="useCache" ${draft.useCache !== false ? "checked" : ""} />
+              </label>
+            </section>
+            <section class="settings-section">
+              <div class="settings-section-title">
+                <h2>行情数据源</h2>
+                <span>失败后自动兜底</span>
+              </div>
+              <label class="setting-row side-setting-row">
+                <span><strong>优先数据源</strong><small>${marketSourceOptions.find(([key]) => key === (draft.marketDataSource || "auto"))?.[2] || marketSourceOptions[0][2]}</small></span>
+                <select data-setting="marketDataSource">
+                  ${marketSourceOptions.map(([key, label]) => `<option value="${key}" ${(draft.marketDataSource || "auto") === key ? "selected" : ""}>${label}</option>`).join("")}
+                </select>
+              </label>
+            </section>
+            <div class="settings-actions">
+              <button class="primary" data-action="save-settings" ${state.settingsSaving ? "disabled" : ""}>${state.settingsSaving ? "应用中..." : "保存并应用"}</button>
             </div>
-          </label>
-          <label class="setting-row">
-            <span><strong>${providerInfo.label || "模型"} AK</strong><small>留空则保留原 AK</small></span>
-            <input type="password" data-setting="apiKey" value="${escapeHtml(draft.apiKey || "")}" placeholder="${draft.hasApiKey || draft.hasKimiApiKey ? `已保存 ${draft.apiKeyMasked || draft.kimiApiKeyMasked}` : "请输入当前供应商 API Key"}" autocomplete="off" />
-          </label>
-        </section>
-        <section class="settings-section">
-          <div class="settings-section-title">
-            <h2>行情数据源</h2>
-            <span>手动选择优先源，失败后仍自动兜底。</span>
-          </div>
-          <label class="setting-row">
-            <span><strong>优先数据源</strong><small>${marketSourceOptions.find(([key]) => key === (draft.marketDataSource || "auto"))?.[2] || marketSourceOptions[0][2]}</small></span>
-            <select data-setting="marketDataSource">
-              ${marketSourceOptions.map(([key, label]) => `<option value="${key}" ${(draft.marketDataSource || "auto") === key ? "selected" : ""}>${label}</option>`).join("")}
-            </select>
-          </label>
-        </section>
-        <section class="settings-section">
-          <div class="settings-section-title">
-            <h2>观澜理财师</h2>
-            <span>控制个股讨论的角色、模型和回答风格。</span>
-          </div>
-          <label class="setting-row">
-            <span><strong>理财师模型</strong><small>个股/板块对话</small></span>
-            <select data-setting="advisorModel">
-              ${advisorOptions.map((item) => `<option value="${item}" ${draft.advisorModel === item ? "selected" : ""}>${item}</option>`).join("")}
-            </select>
-          </label>
-          <label class="setting-row setting-row-wide">
-            <span><strong>角色定义</strong><small>智能体身份</small></span>
-            <textarea data-setting="advisorRole" rows="5">${escapeHtml(draft.advisorRole || "")}</textarea>
-          </label>
-          <label class="setting-row setting-row-wide">
-            <span><strong>对话风格</strong><small>激进程度与篇幅</small></span>
-            <textarea data-setting="advisorStyle" rows="4">${escapeHtml(draft.advisorStyle || "")}</textarea>
-          </label>
-        </section>
-        <section class="settings-section">
-          <div class="settings-section-title">
-            <h2>缓存策略</h2>
-            <span>复用历史行情、新闻和模型结果。</span>
-          </div>
-          <label class="setting-row toggle-row">
-            <span>
-              <strong>使用缓存</strong>
-              <small>降低等待和调用成本</small>
-            </span>
-            <input type="checkbox" data-setting="useCache" ${draft.useCache !== false ? "checked" : ""} />
-          </label>
-        </section>
-        <div class="settings-actions">
-          <button class="primary" data-action="save-settings" ${state.settingsSaving ? "disabled" : ""}>${state.settingsSaving ? "应用中..." : "保存并应用"}</button>
+          </aside>
         </div>
       </div>
     </section>
@@ -2237,7 +2380,7 @@ function stockModal() {
   const discussionReady = stockDiscussionReady(stock);
   const discussionHint = stockDiscussionPendingText(stock);
   return `
-    <div class="overlay open" id="stockOverlay">
+    <div class="overlay open" id="stockOverlay" data-stock-code="${escapeHtml(stock.code || "")}">
       <div class="shade" data-close></div>
       <section class="drawer" role="dialog" aria-modal="true">
         <header class="drawer-head">
@@ -2300,8 +2443,13 @@ function stockDetailView(stock, advice) {
         ${adviceExplanationView(advice)}
         ${stockNewsPolicyView(stock)}
         <div class="chart-wrap interactive-chart">
-          ${stockChartLegend()}
-          <canvas id="stockChart"></canvas>
+          <div class="stock-chart-toolbar">
+            ${stockChartIndicatorControls()}
+            ${stockChartLegend()}
+          </div>
+          <div class="stock-chart-canvas">
+            <canvas id="stockChart"></canvas>
+          </div>
           <div class="chart-tip" id="stockChartTip" aria-hidden="true"></div>
         </div>
       </div>
@@ -2344,8 +2492,36 @@ function stockSectorName(stock) {
   return "";
 }
 
+function inferredCompanyProfile(stock, sectorName = "") {
+  const name = stock.name || stock.code || "该公司";
+  const text = `${name} ${sectorName}`;
+  const rules = [
+    [/白酒|茅台|五粮液|泸州|汾酒|酒/, ["白酒及系列酒的生产与销售", "高端白酒、酱香/浓香系列酒"]],
+    [/银行|农商|商行/, ["商业银行综合金融服务", "公司金融、零售金融、财富管理"]],
+    [/证券|券商|财富/, ["证券经纪、投行、资管和自营业务", "证券交易服务、财富管理、投行业务"]],
+    [/半导体|芯片|集成电路|微电|硅/, ["半导体器件、芯片或设备材料相关业务", "芯片产品、半导体设备/材料"]],
+    [/通信|光模块|网络|中际|新易盛/, ["通信设备、光通信或网络设备相关业务", "光模块、通信网络设备"]],
+    [/新能源|锂|电池|宁德|汽车|比亚迪|赛力斯/, ["新能源汽车、电池或汽车零部件相关业务", "动力电池、新能源汽车、核心零部件"]],
+    [/医药|药|生物|医疗/, ["药品研发、生产和销售", "创新药、仿制药或医疗产品"]],
+    [/军工|航空|航天|电子/, ["军工装备、航空航天或电子装备相关业务", "航空装备、军工电子、核心零部件"]],
+    [/煤|能源|矿/, ["煤炭、电力或能源资源相关业务", "煤炭产品、电力能源服务"]],
+    [/地产|置业|发展|蛇口|万科|保利/, ["房地产开发、运营和物业服务", "住宅开发、商业地产、物业服务"]],
+    [/机器人|自动化|智能装备/, ["工业自动化、机器人或智能装备业务", "机器人本体、伺服系统、智能装备"]]
+  ];
+  const found = rules.find(([pattern]) => pattern.test(text));
+  const [mainBusiness, flagshipProduct] = found?.[1] || [
+    sectorName ? `${sectorName}相关产品或服务` : "主营业务待公司资料确认",
+    sectorName ? `${sectorName}方向核心产品/服务` : "拳头产品待公司资料确认"
+  ];
+  return { mainBusiness, flagshipProduct, source: "本地推断" };
+}
+
 function stockProfileView(stock, advice) {
   const sectorName = stockSectorName(stock);
+  const profile = stock.profile || {};
+  const inferred = inferredCompanyProfile(stock, sectorName);
+  const mainBusiness = profile.mainBusiness || inferred.mainBusiness;
+  const flagshipProduct = profile.flagshipProduct || inferred.flagshipProduct;
   const marketCap = Number(stock.floatMarketCap || stock.totalMarketCap || stock.marketCap);
   const pe = Number(stock.pe);
   const pb = Number(stock.pb);
@@ -2395,10 +2571,22 @@ function stockProfileView(stock, advice) {
           <span>股票说明</span>
           <strong>${stock.name || stock.code} 的雷达画像</strong>
         </div>
-        <small>${stock.quoteSource === "tencent" ? "腾讯行情" : stock.source || "实时行情"} · ${sectorName || "全市场匹配"}</small>
+        <small>${stock.quoteSource === "tencent" ? "腾讯行情" : stock.source || "实时行情"} · ${profile.source || inferred.source} · ${sectorName || profile.industry || "全市场匹配"}</small>
+      </div>
+      <div class="stock-business-grid">
+        <div>
+          <span>主营业务</span>
+          <strong>${mainBusiness || "待确认"}</strong>
+        </div>
+        <div>
+          <span>拳头产品</span>
+          <strong>${flagshipProduct || "待确认"}</strong>
+        </div>
       </div>
       <p>${summary}</p>
       <div class="stock-profile-tags">
+        ${profile.companyName ? `<span>公司：${profile.companyName}</span>` : ""}
+        ${profile.industry ? `<span>行业：${profile.industry}</span>` : ""}
         ${tags.map((tag) => `<span>${tag}</span>`).join("")}
       </div>
     </section>
@@ -2499,14 +2687,38 @@ function indicatorCard(title, value, detail) {
   return `<article class="card indicator-card"><span>${title}</span><strong>${value || "--"}</strong><small>${detail || "--"}</small></article>`;
 }
 
+function stockChartIndicatorControls() {
+  const indicators = state.stockChartIndicators || {};
+  const items = [
+    ["kline", "K", "K线", "显示/隐藏 K 线"],
+    ["boll", "B", "BOLL", "显示/隐藏 BOLL"],
+    ["sar", "S", "SAR", "显示/隐藏 SAR"],
+    ["macd", "M", "MACD", "显示/隐藏 MACD"]
+  ];
+  return `
+    <div class="stock-chart-controls" aria-label="图表指标显示控制">
+      ${items.map(([key, icon, label, title]) => `
+        <button type="button" class="${indicators[key] !== false ? "active" : ""}" data-chart-indicator="${key}" title="${title}" aria-pressed="${indicators[key] !== false ? "true" : "false"}">
+          <i>${icon}</i><span>${label}</span>
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
 function stockChartLegend() {
+  const indicators = state.stockChartIndicators || {};
+  const showMacd = indicators.macd !== false;
   const items = [
     { className: "k-up", label: "红K", text: "收盘高于开盘" },
     { className: "k-down", label: "绿K", text: "收盘低于开盘" },
     { className: "boll-upper", label: "BOLL上/下轨", text: "压力与支撑边界" },
     { className: "boll-mid", label: "BOLL中轨", text: "趋势均衡线" },
-    { className: "sar", label: "SAR", text: "止损/反转参考点" }
-  ];
+    { className: "sar", label: "SAR", text: "止损/反转参考点" },
+    showMacd ? { className: "macd-dif", label: "DIF", text: "快线" } : null,
+    showMacd ? { className: "macd-dea", label: "DEA", text: "慢线" } : null,
+    showMacd ? { className: "macd-hist", label: "柱", text: "红强绿弱" } : null
+  ].filter(Boolean);
   return `
     <div class="stock-chart-legend" aria-label="K BOLL SAR 图例">
       ${items.map((item) => `
@@ -2525,6 +2737,17 @@ function drawStockChart(stock) {
   if (!canvas || !stock.candles?.length) return;
   const tip = document.querySelector("#stockChartTip");
   const rect = canvas.getBoundingClientRect();
+  const wrapRect = canvas.closest(".chart-wrap")?.getBoundingClientRect() || rect;
+  const tipOffset = {
+    x: rect.left - wrapRect.left,
+    y: rect.top - wrapRect.top
+  };
+  if (rect.width < 20 || rect.height < 20) return;
+  const indicators = state.stockChartIndicators || {};
+  const showKline = indicators.kline !== false;
+  const showBoll = indicators.boll !== false;
+  const showSar = indicators.sar !== false;
+  const showMacd = indicators.macd !== false;
   const dpr = window.devicePixelRatio || 1;
   canvas.width = rect.width * dpr;
   canvas.height = rect.height * dpr;
@@ -2532,7 +2755,7 @@ function drawStockChart(stock) {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, rect.width, rect.height);
   const advice = stockAdvice(stock);
-  const candles = stock.candles.slice(-72);
+  const candles = stock.candles.slice(-64);
   const offset = stock.candles.length - candles.length;
   const boll = advice.boll.slice(offset);
   const sar = advice.sar.slice(offset);
@@ -2540,17 +2763,30 @@ function drawStockChart(stock) {
   const dif = advice.macd.dif.slice(offset);
   const dea = advice.macd.dea.slice(offset);
   const pad = { l: 48, r: 58, t: 48, b: 32 };
-  const mainH = rect.height * 0.66;
-  const macdTop = mainH + 24;
-  const highs = candles.map((c) => c.high).concat(boll.map((b) => b.upper), sar);
-  const lows = candles.map((c) => c.low).concat(boll.map((b) => b.lower), sar);
+  const axisH = 28;
+  const axisTop = rect.height - axisH;
+  const macdGap = showMacd ? 18 : 0;
+  const macdH = showMacd ? Math.max(104, Math.min(150, rect.height * 0.22)) : 0;
+  const macdTop = showMacd ? axisTop - macdH : axisTop;
+  const mainH = showMacd ? macdTop - macdGap : axisTop;
+  const mainBottom = mainH;
+  const highs = candles.map((c) => c.high);
+  const lows = candles.map((c) => c.low);
+  if (showBoll) {
+    highs.push(...boll.map((b) => b.upper));
+    lows.push(...boll.map((b) => b.lower));
+  }
+  if (showSar) {
+    highs.push(...sar);
+    lows.push(...sar);
+  }
   const max = Math.max(...highs);
   const min = Math.min(...lows);
   const xStep = (rect.width - pad.l - pad.r) / candles.length;
-  const y = (value) => pad.t + (max - value) / Math.max(0.01, max - min) * (mainH - pad.t - 10);
+  const y = (value) => pad.t + (max - value) / Math.max(0.01, max - min) * (mainBottom - pad.t - 8);
   const chartLeft = pad.l;
   const chartRight = rect.width - pad.r;
-  const chartBottom = mainH - 10;
+  const chartBottom = mainBottom;
   ctx.fillStyle = "#09131c";
   ctx.fillRect(0, 0, rect.width, rect.height);
   ctx.strokeStyle = "#1d3344";
@@ -2559,7 +2795,7 @@ function drawStockChart(stock) {
   ctx.textAlign = "left";
   ctx.fillText("价格", chartRight + 7, 16);
   for (let i = 0; i < 5; i += 1) {
-    const yy = pad.t + i * (mainH - pad.t - 10) / 4;
+    const yy = pad.t + i * (mainBottom - pad.t - 8) / 4;
     const price = max - (max - min) * i / 4;
     ctx.beginPath();
     ctx.moveTo(chartLeft, yy);
@@ -2570,67 +2806,96 @@ function drawStockChart(stock) {
     ctx.textAlign = "left";
     ctx.fillText(fmt(price), chartRight + 7, yy + 4);
   }
-  candles.forEach((c, i) => {
-    const x = pad.l + i * xStep + xStep / 2;
-    const up = c.close >= c.open;
-    ctx.strokeStyle = up ? "#ff4d57" : "#00b070";
-    ctx.fillStyle = up ? "#ff4d57" : "#00b070";
-    ctx.beginPath();
-    ctx.moveTo(x, y(c.high));
-    ctx.lineTo(x, y(c.low));
-    ctx.stroke();
-    const bodyY = Math.min(y(c.open), y(c.close));
-    const bodyH = Math.max(2, Math.abs(y(c.open) - y(c.close)));
-    ctx.fillRect(x - xStep * 0.3, bodyY, Math.max(2, xStep * 0.6), bodyH);
-  });
-  drawLine(ctx, boll.map((b) => b.upper), "#f2b84b", y, pad.l, xStep);
-  drawLine(ctx, boll.map((b) => b.mid), "#54a3ff", y, pad.l, xStep);
-  drawLine(ctx, boll.map((b) => b.lower), "#f2b84b", y, pad.l, xStep);
-  ctx.fillStyle = "#d184ff";
-  sar.forEach((value, i) => {
-    const x = pad.l + i * xStep + xStep / 2;
-    ctx.beginPath();
-    ctx.arc(x, y(value), 2.1, 0, Math.PI * 2);
-    ctx.fill();
-  });
+  if (showKline) {
+    candles.forEach((c, i) => {
+      const x = pad.l + i * xStep + xStep / 2;
+      const up = c.close >= c.open;
+      ctx.strokeStyle = up ? "#ff4d57" : "#00b070";
+      ctx.fillStyle = up ? "#ff4d57" : "#00b070";
+      ctx.beginPath();
+      ctx.moveTo(x, y(c.high));
+      ctx.lineTo(x, y(c.low));
+      ctx.stroke();
+      const bodyY = Math.min(y(c.open), y(c.close));
+      const bodyH = Math.max(2, Math.abs(y(c.open) - y(c.close)));
+      ctx.fillRect(x - xStep * 0.3, bodyY, Math.max(2, xStep * 0.6), bodyH);
+    });
+  }
+  if (showBoll) {
+    drawLine(ctx, boll.map((b) => b.upper), "#f2b84b", y, pad.l, xStep);
+    drawLine(ctx, boll.map((b) => b.mid), "#54a3ff", y, pad.l, xStep);
+    drawLine(ctx, boll.map((b) => b.lower), "#f2b84b", y, pad.l, xStep);
+  }
+  if (showSar) {
+    ctx.fillStyle = "#d184ff";
+    sar.forEach((value, i) => {
+      const x = pad.l + i * xStep + xStep / 2;
+      ctx.beginPath();
+      ctx.arc(x, y(value), 2.1, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
   const hMax = Math.max(...hist.map(Math.abs), 0.01);
-  const zero = macdTop + 62;
+  if (showMacd) {
+    const macdPadT = 20;
+    const macdPadB = 18;
+    const macdMid = macdTop + macdH / 2;
+    const macdAmp = Math.max(18, (macdH - macdPadT - macdPadB) / 2);
+    const zero = macdMid;
+    ctx.save();
+    ctx.fillStyle = "rgba(4, 12, 19, 0.42)";
+    ctx.fillRect(chartLeft, macdTop, chartRight - chartLeft, macdH);
+    ctx.strokeStyle = "#1d3344";
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath();
+    ctx.moveTo(chartLeft, macdTop);
+    ctx.lineTo(chartRight, macdTop);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(chartLeft, zero);
+    ctx.lineTo(chartRight, zero);
+    ctx.stroke();
+    hist.forEach((value, i) => {
+      const x = pad.l + i * xStep + xStep * 0.25;
+      const barH = value / hMax * macdAmp;
+      ctx.fillStyle = value >= 0 ? "#ff4d57" : "#00b070";
+      ctx.fillRect(x, zero - Math.max(0, barH), Math.max(1, xStep * 0.5), Math.abs(barH));
+    });
+    const macdY = (value) => zero - value / hMax * (macdAmp * 0.74);
+    drawLine(ctx, dif, "#54a3ff", macdY, pad.l, xStep);
+    drawLine(ctx, dea, "#f2b84b", macdY, pad.l, xStep);
+    ctx.restore();
+  }
+  const labelEvery = Math.max(1, Math.ceil(candles.length / 6));
+  ctx.fillStyle = "#09131c";
+  ctx.fillRect(0, axisTop, rect.width, axisH);
   ctx.strokeStyle = "#1d3344";
   ctx.beginPath();
-  ctx.moveTo(pad.l, zero);
-  ctx.lineTo(chartRight, zero);
+  ctx.moveTo(chartLeft, axisTop + 0.5);
+  ctx.lineTo(chartRight, axisTop + 0.5);
   ctx.stroke();
-  hist.forEach((value, i) => {
-    const x = pad.l + i * xStep + xStep * 0.25;
-    const barH = value / hMax * 48;
-    ctx.fillStyle = value >= 0 ? "#ff4d57" : "#00b070";
-    ctx.fillRect(x, zero - Math.max(0, barH), Math.max(1, xStep * 0.5), Math.abs(barH));
-  });
-  const macdY = (value) => zero - value / hMax * 34;
-  drawLine(ctx, dif, "#54a3ff", macdY, pad.l, xStep);
-  drawLine(ctx, dea, "#f2b84b", macdY, pad.l, xStep);
-  const labelEvery = Math.max(1, Math.ceil(candles.length / 6));
   ctx.fillStyle = "#6f8494";
   ctx.font = "11px system-ui";
   ctx.textAlign = "center";
   candles.forEach((c, i) => {
     if (i % labelEvery && i !== candles.length - 1) return;
     const x = pad.l + i * xStep + xStep / 2;
-    ctx.fillText(String(c.day || "").slice(5), x, chartBottom + 18);
+    ctx.fillText(String(c.day || "").slice(5), x, axisTop + 18);
   });
-  const pointer = normalizeStockPointer(stockChartPointer, rect, pad, mainH, candles.length);
+  const pointer = normalizeStockPointer(stockChartPointer, rect, pad, mainBottom, candles.length);
   if (pointer) {
     const index = Math.max(0, Math.min(candles.length - 1, Math.round((pointer.x - pad.l - xStep / 2) / xStep)));
     const candle = candles[index];
     const px = pad.l + index * xStep + xStep / 2;
-    const pointerPrice = max - ((pointer.y - pad.t) / Math.max(1, mainH - pad.t - 10)) * (max - min);
+    const pointerPrice = max - ((pointer.y - pad.t) / Math.max(1, mainBottom - pad.t - 8)) * (max - min);
     ctx.save();
     ctx.strokeStyle = "rgba(218, 230, 238, 0.55)";
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
     ctx.moveTo(px, pad.t);
-    ctx.lineTo(px, zero + 58);
+    ctx.lineTo(px, mainBottom);
     ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(chartLeft, pointer.y);
@@ -2644,23 +2909,35 @@ function drawStockChart(stock) {
     ctx.font = "11px system-ui";
     ctx.fillText(fmt(pointerPrice), chartRight + 9, pointer.y + 4);
     ctx.restore();
-    updateStockChartTip(tip, pointer, candle, pointerPrice, boll[index], sar[index], rect);
+    updateStockChartTip(tip, pointer, candle, pointerPrice, showBoll ? boll[index] : null, showSar ? sar[index] : null, rect, tipOffset);
   } else if (tip) {
     tip.classList.remove("show");
   }
   drawChartLineLegend(ctx, pad.l, 18, [
-    { color: "#ff4d57", label: "红K 多方" },
-    { color: "#00b070", label: "绿K 空方" },
-    { color: "#f2b84b", label: "BOLL上/下轨" },
-    { color: "#54a3ff", label: "BOLL中轨" },
-    { color: "#d184ff", label: "SAR反转点", dot: true }
-  ]);
-  drawChartLineLegend(ctx, pad.l, macdTop + 12, [
-    { color: "#54a3ff", label: "DIF" },
-    { color: "#f2b84b", label: "DEA" },
-    { color: "#ff4d57", label: "MACD红柱" },
-    { color: "#00b070", label: "MACD绿柱" }
-  ]);
+    showKline ? { color: "#ff4d57", label: "红K 多方" } : null,
+    showKline ? { color: "#00b070", label: "绿K 空方" } : null,
+    showBoll ? { color: "#f2b84b", label: "BOLL上/下轨" } : null,
+    showBoll ? { color: "#54a3ff", label: "BOLL中轨" } : null,
+    showSar ? { color: "#d184ff", label: "SAR反转点", dot: true } : null
+  ].filter(Boolean));
+}
+
+function scheduleStockChartDraw() {
+  if (stockChartDrawFrame) return;
+  stockChartDrawFrame = requestAnimationFrame(() => {
+    stockChartDrawFrame = 0;
+    if (state.modalStock) drawStockChart(state.modalStock);
+  });
+}
+
+function syncStockChartIndicatorControls() {
+  const indicators = state.stockChartIndicators || {};
+  document.querySelectorAll("[data-chart-indicator]").forEach((button) => {
+    const key = button.dataset.chartIndicator;
+    const active = indicators[key] !== false;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
 }
 
 function drawChartLineLegend(ctx, x, y, items) {
@@ -2705,12 +2982,12 @@ function normalizeStockPointer(pointer, rect, pad, mainH, candleCount) {
   };
 }
 
-function updateStockChartTip(tip, pointer, candle, price, boll, sar, rect) {
+function updateStockChartTip(tip, pointer, candle, price, boll, sar, rect, offset = { x: 0, y: 0 }) {
   if (!tip || !candle) return;
   const left = pointer.x > rect.width * 0.62 ? pointer.x - 172 : pointer.x + 12;
   const top = pointer.y > rect.height * 0.52 ? pointer.y - 122 : pointer.y + 12;
-  tip.style.left = `${Math.max(8, Math.min(rect.width - 164, left))}px`;
-  tip.style.top = `${Math.max(8, Math.min(rect.height - 118, top))}px`;
+  tip.style.left = `${offset.x + Math.max(8, Math.min(rect.width - 164, left))}px`;
+  tip.style.top = `${offset.y + Math.max(8, Math.min(rect.height - 118, top))}px`;
   tip.innerHTML = `
     <b>${candle.day}</b>
     <span>X 日期：${candle.day}</span>
@@ -2822,17 +3099,23 @@ function drawIndexChart(index) {
   });
 }
 
-function render() {
+function render(scrollAnchor = captureScrollAnchors()) {
   const advisorFocus = skipAdvisorFocusRestoreOnce ? null : captureAdvisorFocus();
+  const stockScroll = captureStockModalScroll();
   skipAdvisorFocusRestoreOnce = false;
   if (state.page === "radar" || state.page === "sector") state.page = "home";
   const pages = { home: homePage, recommend: recommendPage, portfolio: portfolioPage, discussion: discussionPage, settings: settingsPage };
+  suppressScrollTracking = true;
   app.innerHTML = shell(pages[state.page]());
-  if (state.modalStock) requestAnimationFrame(() => drawStockChart(state.modalStock));
+  restoreScrollAnchors(scrollAnchor);
+  setTimeout(() => {
+    suppressScrollTracking = false;
+  }, 140);
+  restoreStockModalScroll(stockScroll);
+  if (state.modalStock) scheduleStockChartDraw();
   if (state.modalIndex) requestAnimationFrame(() => drawIndexChart(state.modalIndex));
   if (advisorFocus) restoreAdvisorFocus(advisorFocus);
   else focusAdvisorInput();
-  scrollChatToBottom();
 }
 
 app.addEventListener("pointerdown", (event) => {
@@ -2895,6 +3178,15 @@ app.addEventListener("click", (event) => {
     loadSectorNewsForTop();
   }
   if (stockSort) update({ modalStockSort: stockSort });
+  const chartIndicator = event.target.closest("[data-chart-indicator]")?.dataset.chartIndicator;
+  if (chartIndicator) {
+    event.preventDefault();
+    const current = state.stockChartIndicators || {};
+    state.stockChartIndicators = { ...current, [chartIndicator]: current[chartIndicator] === false };
+    syncStockChartIndicatorControls();
+    scheduleStockChartDraw();
+    return;
+  }
   const closeTarget = event.target.closest("[data-close]");
   if (closeTarget) {
     closeTopOverlay();
@@ -2903,7 +3195,7 @@ app.addEventListener("click", (event) => {
     state.recommendations = [];
     state.sectorStockIndexReady = false;
     state.sectorStockIndexLoading = false;
-    loadSectors({ clearStockCache: true });
+    loadSectors({ silent: true, clearStockCache: true });
     if (state.page === "recommend") setTimeout(() => loadRecommendations({ force: true }), 0);
   }
   if (event.target.closest("[data-action='analyze-portfolio']")) analyzePortfolioText();
@@ -2961,7 +3253,7 @@ app.addEventListener("click", (event) => {
     state.recommendations = [];
     state.sectorStockIndexReady = false;
     state.sectorStockIndexLoading = false;
-    loadSectors({ clearStockCache: true });
+    loadSectors({ silent: true, clearStockCache: true });
     if (state.page === "recommend") setTimeout(() => loadRecommendations({ force: true }), 0);
   }
 });
@@ -2978,6 +3270,7 @@ app.addEventListener("change", (event) => {
     const key = event.target.dataset.setting;
     const value = event.target.type === "checkbox" ? event.target.checked : event.target.value;
     const draft = { ...(state.settingsDraft || {}), [key]: value };
+    let shouldRenderSettings = false;
     if (key === "aiProvider") {
       const providerInfo = draft.aiProviders?.[value] || state.settings?.aiProviders?.[value] || {};
       draft.apiUrl = providerInfo.apiUrl || draft.apiUrl || "";
@@ -2986,9 +3279,10 @@ app.addEventListener("change", (event) => {
       draft.visionModel = providerInfo.visionModel || "";
       draft.advisorModel = providerInfo.advisorModel || draft.advisorModel || "";
       draft.apiKey = "";
+      shouldRenderSettings = true;
     }
     state.settingsDraft = draft;
-    render();
+    if (shouldRenderSettings) render();
   }
 });
 
@@ -3052,19 +3346,24 @@ app.addEventListener("pointermove", (event) => {
     x: event.clientX - rect.left,
     y: event.clientY - rect.top
   };
-  drawStockChart(state.modalStock);
+  scheduleStockChartDraw();
 });
 
 app.addEventListener("pointerleave", (event) => {
   if (!event.target.closest("#stockChart") || !state.modalStock) return;
   stockChartPointer = null;
-  drawStockChart(state.modalStock);
+  scheduleStockChartDraw();
 }, true);
 
 window.addEventListener("resize", () => {
-  if (state.modalStock) drawStockChart(state.modalStock);
+  if (state.modalStock) scheduleStockChartDraw();
   if (state.modalIndex) drawIndexChart(state.modalIndex);
 });
+
+window.addEventListener("scroll", () => {
+  if (suppressScrollTracking) return;
+  scrollGeneration += 1;
+}, { passive: true });
 
 render();
 loadSectors();

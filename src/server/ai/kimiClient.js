@@ -1,6 +1,6 @@
 const { DEFAULT_SETTINGS } = require("../config");
 const { cacheGet, cacheSet } = require("../storage/cacheStore");
-const { normalizeAiApiUrl, normalizeKimiApiUrl, providerDefaults, readAppSettings } = require("../storage/settingsStore");
+const { normalizeAiApiUrl, normalizeKimiApiUrl, normalizeModelQpm, providerDefaults, readAppSettings } = require("../storage/settingsStore");
 
 function aiConfig() {
   const settings = readAppSettings();
@@ -22,6 +22,7 @@ function aiConfig() {
     ocrMode: defaults.ocrMode || "chatVision",
     supportsWebSearch: Boolean(defaults.supportsWebSearch),
     supportsVision: Boolean(defaults.supportsVision),
+    modelQpm: normalizeModelQpm(settings.modelQpm),
     useCache: settings.useCache
   };
 }
@@ -60,6 +61,66 @@ function kimiFallbackUrls(primaryUrl) {
   return aiFallbackUrls(primaryUrl, "kimi-cn");
 }
 
+const modelCallQueue = [];
+let modelCallRunning = false;
+let nextModelCallAt = 0;
+
+function modelCallIntervalMs(qpm = DEFAULT_SETTINGS.modelQpm || 500) {
+  const safeQpm = Math.max(1, Math.min(1000, Number(qpm) || 500));
+  return Math.ceil(60_000 / safeQpm);
+}
+
+function scheduleModelQueue() {
+  if (modelCallRunning || !modelCallQueue.length) return;
+  const waitMs = Math.max(0, nextModelCallAt - Date.now());
+  setTimeout(runNextModelCall, waitMs);
+}
+
+async function runNextModelCall() {
+  if (modelCallRunning || !modelCallQueue.length) return;
+  const item = modelCallQueue.shift();
+  modelCallRunning = true;
+  nextModelCallAt = Date.now() + modelCallIntervalMs(item.qpm);
+  try {
+    item.resolve(await item.fn());
+  } catch (error) {
+    item.reject(error);
+  } finally {
+    modelCallRunning = false;
+    scheduleModelQueue();
+  }
+}
+
+function enqueueModelCall(providerConfig, fn) {
+  return new Promise((resolve, reject) => {
+    modelCallQueue.push({
+      qpm: providerConfig?.modelQpm || DEFAULT_SETTINGS.modelQpm || 500,
+      fn,
+      resolve,
+      reject
+    });
+    scheduleModelQueue();
+  });
+}
+
+async function fetchWithModelLimit(providerConfig, url, options) {
+  return enqueueModelCall(providerConfig, () => fetch(url, options));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithModelRetry(providerConfig, url, options, retries = 2) {
+  let response;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    response = await fetchWithModelLimit(providerConfig, url, options);
+    if (![429, 500, 502, 503, 504].includes(response.status) || attempt === retries) return response;
+    await sleep(800 * (attempt + 1));
+  }
+  return response;
+}
+
 async function chatCompletion({ model, messages, temperature = 0.35, maxTokens, tools, providerConfig = aiConfig(), extra = {} }) {
   const body = {
     model,
@@ -69,7 +130,7 @@ async function chatCompletion({ model, messages, temperature = 0.35, maxTokens, 
   };
   if (maxTokens) body.max_tokens = maxTokens;
   if (tools?.length) body.tools = tools;
-  const res = await fetch(providerConfig.apiUrl, {
+  const res = await fetchWithModelRetry(providerConfig, providerConfig.apiUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -94,7 +155,7 @@ async function chatCompletion({ model, messages, temperature = 0.35, maxTokens, 
 async function glmLayoutOcr({ imageData, providerConfig }) {
   const url = providerConfig.ocrApiUrl || providerDefaults(providerConfig.provider).ocrApiUrl;
   if (!url) throw new Error("GLM OCR API 地址未配置");
-  const res = await fetch(url, {
+  const res = await fetchWithModelRetry(providerConfig, url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

@@ -25,6 +25,12 @@ function normalizeMarketDataSource(source = "auto") {
   return ["auto", "tencent", "eastmoney", "sina"].includes(value) ? value : "auto";
 }
 
+function normalizeModelQpm(value = DEFAULT_SETTINGS.modelQpm) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_SETTINGS.modelQpm || 500;
+  return Math.max(1, Math.min(1000, Math.round(parsed)));
+}
+
 function readAppSettings() {
   const stored = readJsonFile(SETTINGS_FILE, {});
   const provider = normalizeAiProvider(stored.aiProvider || DEFAULT_SETTINGS.aiProvider);
@@ -42,7 +48,8 @@ function readAppSettings() {
     kimiApiUrl: stored.kimiApiUrl || DEFAULT_SETTINGS.kimiApiUrl,
     kimiModel: stored.kimiModel || DEFAULT_SETTINGS.kimiModel,
     kimiVisionModel: stored.kimiVisionModel || DEFAULT_SETTINGS.kimiVisionModel,
-    kimiApiKey: stored.kimiApiKey || DEFAULT_SETTINGS.kimiApiKey
+    kimiApiKey: stored.kimiApiKey || DEFAULT_SETTINGS.kimiApiKey,
+    modelQpm: normalizeModelQpm(stored.modelQpm || DEFAULT_SETTINGS.modelQpm)
   };
 }
 
@@ -71,6 +78,7 @@ function writeAppSettings(next = {}) {
     kimiModel: provider.startsWith("kimi") ? textModel : (current.kimiModel || DEFAULT_SETTINGS.kimiModel),
     kimiVisionModel: provider.startsWith("kimi") ? visionModel : (current.kimiVisionModel || DEFAULT_SETTINGS.kimiVisionModel),
     kimiApiKey: provider.startsWith("kimi") ? nextApiKey : (current.kimiApiKey || DEFAULT_SETTINGS.kimiApiKey || ""),
+    modelQpm: normalizeModelQpm(next.modelQpm || current.modelQpm || DEFAULT_SETTINGS.modelQpm),
     useCache: Boolean(next.useCache),
     marketDataSource: source
   };
@@ -103,6 +111,7 @@ function publicSettings(settings = readAppSettings()) {
     advisorModel: settings.advisorModel,
     advisorRole: settings.advisorRole,
     advisorStyle: settings.advisorStyle,
+    modelQpm: normalizeModelQpm(settings.modelQpm),
     useCache: settings.useCache,
     marketDataSource: normalizeMarketDataSource(settings.marketDataSource),
     hasApiKey: Boolean(settings.apiKey),
@@ -126,6 +135,7 @@ module.exports = {
   normalizeAiApiUrl,
   normalizeKimiApiUrl,
   normalizeMarketDataSource,
+  normalizeModelQpm,
   readAppSettings,
   writeAppSettings,
   publicSettings,
