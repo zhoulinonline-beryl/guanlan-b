@@ -782,6 +782,7 @@ button {
 
 .recommend-strip {
   margin-bottom: 14px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .recommend-list {
@@ -901,6 +902,131 @@ button {
   height: 5px;
   border-radius: 50%;
   background: var(--blue);
+}
+
+.recommend-subhead {
+  margin: 16px 0 10px;
+}
+
+.build-position-section {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.build-position-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.build-position-card {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+  cursor: pointer;
+  background: linear-gradient(180deg, rgba(84, 163, 255, 0.1), rgba(9, 19, 28, 0.96));
+}
+
+.build-position-card:hover {
+  border-color: rgba(84, 163, 255, 0.56);
+  background: #0f202d;
+}
+
+.build-position-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.build-position-head strong,
+.build-position-head small {
+  display: block;
+}
+
+.build-position-head strong {
+  font-size: 17px;
+}
+
+.build-position-head small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.build-position-head b {
+  color: #ffd78a;
+  font-size: 22px;
+}
+
+.build-position-quote,
+.build-position-levels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.build-position-quote span,
+.build-position-levels span {
+  min-width: 0;
+  border: 1px solid rgba(84, 163, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(6, 13, 20, 0.72);
+  padding: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.build-position-quote b {
+  color: var(--text);
+}
+
+.build-position-levels span {
+  color: #d7e5ef;
+}
+
+.build-position-bullgate {
+  display: grid;
+  grid-template-columns: minmax(128px, 0.42fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.build-position-bullgate div {
+  min-width: 0;
+  border: 1px solid rgba(46, 230, 214, 0.18);
+  border-radius: 8px;
+  background: rgba(46, 230, 214, 0.06);
+  padding: 9px;
+}
+
+.build-position-bullgate span,
+.build-position-bullgate em {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.build-position-bullgate strong {
+  display: block;
+  margin: 4px 0;
+  color: #dffdfa;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.build-position-bullgate div:first-child strong {
+  color: #2ee6d6;
+  font-size: 18px;
+}
+
+.build-position-card p {
+  margin: 0;
+  color: #c4d2dc;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .table th:first-child,
@@ -1379,6 +1505,14 @@ button {
   color: var(--violet);
 }
 
+.stock-chart-legend .bullgate {
+  color: #2ee6d6;
+}
+
+.stock-chart-legend .bullgate i {
+  border-top-style: dashed;
+}
+
 .stock-chart-legend .macd-dif {
   color: var(--blue);
 }
@@ -1742,6 +1876,86 @@ button {
 .advice-explain {
   content-visibility: auto;
   contain-intrinsic-size: auto 260px;
+}
+
+.bullgate-explain {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(46, 230, 214, 0.22);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(46, 230, 214, 0.08), rgba(8, 19, 28, 0.88));
+  padding: 12px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 190px;
+}
+
+.bullgate-explain-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bullgate-explain-head span,
+.bullgate-playbook span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.bullgate-explain-head strong {
+  display: block;
+  margin-top: 4px;
+  color: #e6fffb;
+  font-size: 18px;
+}
+
+.bullgate-explain-head > div:last-child {
+  text-align: right;
+}
+
+.bullgate-explain p {
+  margin: 0;
+  color: #c8dce1;
+  font-size: 13px;
+  line-height: 1.58;
+}
+
+.bullgate-playbook {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.bullgate-playbook div {
+  min-width: 0;
+  border: 1px solid rgba(46, 230, 214, 0.16);
+  border-radius: 8px;
+  background: rgba(5, 15, 23, 0.62);
+  padding: 9px 10px;
+}
+
+.bullgate-playbook strong {
+  display: block;
+  margin-top: 5px;
+  color: #dceff2;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.bullgate-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.bullgate-tags span {
+  border: 1px solid rgba(46, 230, 214, 0.22);
+  border-radius: 6px;
+  background: rgba(46, 230, 214, 0.08);
+  color: #b8f3ec;
+  padding: 5px 8px;
+  font-size: 12px;
 }
 
 .stock-news-panel {
@@ -3474,6 +3688,11 @@ canvas {
   .advice-grid,
   .stock-data-grid,
   .opportunity-grid,
+  .bullgate-playbook,
+  .build-position-grid,
+  .build-position-quote,
+  .build-position-levels,
+  .build-position-bullgate,
   .recommend-metrics,
   .recommend-action,
   .quote-strip,
