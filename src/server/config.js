@@ -107,6 +107,7 @@ const DEFAULT_SETTINGS = {
   kimiModel: process.env.KIMI_MODEL || AI_PROVIDERS["kimi-cn"].textModel,
   kimiVisionModel: process.env.KIMI_VISION_MODEL || AI_PROVIDERS["kimi-cn"].visionModel,
   kimiApiKey: process.env.KIMI_API_KEY || process.env.MOONSHOT_API_KEY || "",
+  modelQpm: Number(process.env.MODEL_QPM || 500),
   useCache: true,
   marketDataSource: process.env.MARKET_DATA_SOURCE || "auto"
 };

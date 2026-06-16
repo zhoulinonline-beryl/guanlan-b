@@ -70,15 +70,17 @@ export function sar(candles, step = 0.02, max = 0.2) {
 
 export function sectorReasons(sector) {
   const stocks = sector.stocks || [];
-  const avgStockScore = stocks.length ? stocks.reduce((sum, stock) => sum + stock.score, 0) / stocks.length : 0;
+  const safeNumber = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+  const fixed = (value, digits = 1) => safeNumber(value).toFixed(digits);
+  const avgStockScore = stocks.length ? stocks.reduce((sum, stock) => sum + safeNumber(stock.score), 0) / stocks.length : 0;
   const hotCount = stocks.filter((stock) => stock.pct > 1.2 && stock.mainFlow > 5).length;
   const top = stocks[0];
   const breadth = `${sector.upCount || 0} 涨 / ${sector.downCount || 0} 跌`;
   const hasMainNet = sector.mainNet !== null && sector.mainNet !== undefined && Number.isFinite(Number(sector.mainNet));
   return [
-    `近 3-5 日板块指数强度靠前，当前雷达分 ${sector.attackScore.toFixed(1)}，成交额约 ${(sector.amount / 100000000).toFixed(1)} 亿。`,
-    hasMainNet ? `板块涨跌家数为 ${breadth}，主力净额约 ${(sector.mainNet / 100000000).toFixed(2)} 亿，可用于判断是否由局部异动扩散为板块进攻。` : `板块涨跌家数为 ${breadth}；当前兜底行情源未提供主力净额，雷达改用成交额、涨跌广度和近 3-5 日趋势做代理。`,
-    stocks.length ? `Top10 中 ${hotCount} 只个股同时出现上涨与主力净流入，平均进攻分 ${avgStockScore.toFixed(1)}，${top.name} 暂居队首。` : "成分股 Top10 尚未加载，进入推荐页后会补充个股梯队与主力强度。",
+    `近 3-5 日板块指数强度靠前，当前雷达分 ${fixed(sector.attackScore)}，成交额约 ${fixed(safeNumber(sector.amount) / 100000000)} 亿。`,
+    hasMainNet ? `板块涨跌家数为 ${breadth}，主力净额约 ${fixed(safeNumber(sector.mainNet) / 100000000, 2)} 亿，可用于判断是否由局部异动扩散为板块进攻。` : `板块涨跌家数为 ${breadth}；当前兜底行情源未提供主力净额，雷达改用成交额、涨跌广度和近 3-5 日趋势做代理。`,
+    stocks.length ? `Top10 中 ${hotCount} 只个股同时出现上涨与主力净流入，平均进攻分 ${fixed(avgStockScore)}，${top.name} 暂居队首。` : "成分股 Top10 尚未加载，进入推荐页后会补充个股梯队与主力强度。",
     "后续重点观察板块是否持续放量、龙头是否高位横住、后排是否补涨；三者同时出现时，方向可信度更高。"
   ];
 }

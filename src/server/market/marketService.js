@@ -123,6 +123,87 @@ function createMarketService({
     return { id: found[0], name: found[1] };
   }
 
+  function eastmoneyF10Code(code = "", market = marketOf(code)) {
+    const cleanCode = String(code || "").replace(/\D/g, "");
+    if (!cleanCode) return "";
+    if (market === 1 || cleanCode.startsWith("6")) return `SH${cleanCode}`;
+    if (cleanCode.startsWith("8") || cleanCode.startsWith("4")) return `BJ${cleanCode}`;
+    return `SZ${cleanCode}`;
+  }
+
+  function cleanProfileText(text = "") {
+    return String(text || "")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function shortClause(text = "", maxLength = 96) {
+    const cleaned = cleanProfileText(text);
+    if (!cleaned) return "";
+    const clause = cleaned.split(/[。；;]\s*/).find(Boolean) || cleaned;
+    return clause.length > maxLength ? `${clause.slice(0, maxLength)}...` : clause;
+  }
+
+  function extractMainBusiness(profile = "", businessScope = "") {
+    const text = cleanProfileText(`${profile} ${businessScope}`);
+    const match = text.match(/主营(.{4,80}?)(?=,|，|。|；|;|主导产品|核心产品|主要产品)/) || text.match(/主要从事(.{4,80}?)(?=,|，|。|；|;|主导产品|核心产品|主要产品)/);
+    if (match) return cleanProfileText(match[0]);
+    return shortClause(businessScope || profile, 110);
+  }
+
+  function extractFlagshipProducts(profile = "", businessScope = "", stockName = "") {
+    const text = cleanProfileText(`${profile} ${businessScope}`);
+    const patterns = [
+      /主导产品(.{3,60}?)(?=,|，|。|；|;|是|为)/,
+      /核心产品(.{3,60}?)(?=,|，|。|；|;|是|为)/,
+      /拳头产品(.{3,60}?)(?=,|，|。|；|;|是|为)/,
+      /主要产品(?:包括|为|有)?(.{3,60}?)(?=,|，|。|；|;|是|为)/
+    ];
+    const match = patterns.map((pattern) => text.match(pattern)).find(Boolean);
+    if (match) return cleanProfileText(match[0]).replace(/^主要产品包括?/, "主要产品");
+    const productTerms = [
+      "贵州茅台酒", "酱香系列酒", "动力电池", "储能电池", "锂离子电池", "电池管理系统",
+      "新能源汽车", "整车", "汽车零部件", "光模块", "通信设备", "网络设备", "芯片",
+      "集成电路", "半导体设备", "半导体材料", "创新药", "仿制药", "医疗器械", "工业机器人",
+      "伺服系统", "智能装备", "航空装备", "军工电子", "煤炭", "电力", "住宅开发", "物业服务",
+      "证券经纪", "财富管理", "投行业务", "公司金融", "零售金融"
+    ];
+    const hits = productTerms.filter((term) => text.includes(term));
+    if (hits.length) return [...new Set(hits)].slice(0, 4).join("、");
+    const scopeLead = shortClause(businessScope, 90)
+      .replace(/^(许可项目[:：]?|一般项目[:：]?)/, "")
+      .replace(/的生产与销售|生产与销售|研发、生产、销售|研发、销售/g, "")
+      .trim();
+    if (scopeLead) return scopeLead;
+    return stockName ? `${stockName}核心产品待进一步确认` : "核心产品待进一步确认";
+  }
+
+  async function getStockProfile(code, market = marketOf(code), name = "") {
+    const f10Code = eastmoneyF10Code(code, market);
+    if (!f10Code) throw new Error("缺少股票代码");
+    const json = await fetchJson(`https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax?code=${f10Code}`);
+    const base = Array.isArray(json?.jbzl) ? json.jbzl[0] : null;
+    if (!base) throw new Error(`无法获取 ${code} 公司资料`);
+    const profile = cleanProfileText(base.ORG_PROFILE || "");
+    const businessScope = cleanProfileText(base.BUSINESS_SCOPE || "");
+    const stockName = base.SECURITY_NAME_ABBR || name || code;
+    return {
+      code: base.SECURITY_CODE || code,
+      secucode: base.SECUCODE || "",
+      name: stockName,
+      companyName: cleanProfileText(base.ORG_NAME || ""),
+      industry: cleanProfileText(base.EM2016 || base.INDUSTRYCSRC1 || ""),
+      mainBusiness: extractMainBusiness(profile, businessScope),
+      flagshipProduct: extractFlagshipProducts(profile, businessScope, stockName),
+      businessScope,
+      profile,
+      website: cleanProfileText(base.ORG_WEB || ""),
+      source: "eastmoney-f10"
+    };
+  }
+
   async function withTencentStockQuotes(stocks = [], window = 5) {
     const symbols = stocks.map(symbolFromStock);
     const { quotes, source } = await getQuotesBySource(symbols);
@@ -644,6 +725,7 @@ function createMarketService({
     getSectors,
     getStocks,
     getStockKline,
+    getStockProfile,
     getFallbackSectors,
     getFallbackStocks
   };

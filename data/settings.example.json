@@ -12,6 +12,7 @@
   "kimiModel": "kimi-k2.6",
   "kimiVisionModel": "kimi-k2.6",
   "kimiApiKey": "",
+  "modelQpm": 500,
   "useCache": true,
   "marketDataSource": "auto"
 }

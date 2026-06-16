@@ -219,7 +219,8 @@ const {
   getIndexKline,
   getSectors,
   getStocks,
-  getStockKline
+  getStockKline,
+  getStockProfile
 } = marketService;
 
 const {
@@ -1460,7 +1461,8 @@ const handleApi = createApiRouter({
   getIndices,
   getIndexKline,
   getStocks,
-  getStockKline
+  getStockKline,
+  getStockProfile
 });
 
 function handleStatic(req, res) {
@@ -1478,7 +1480,10 @@ function handleStatic(req, res) {
       res.end("Not found");
       return;
     }
-    res.writeHead(200, { "Content-Type": staticTypes[path.extname(file)] || "application/octet-stream" });
+    res.writeHead(200, {
+      "Content-Type": staticTypes[path.extname(file)] || "application/octet-stream",
+      "Cache-Control": "no-store"
+    });
     res.end(data);
   });
 }
