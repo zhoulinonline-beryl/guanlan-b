@@ -8,6 +8,7 @@ const numbers = require("../src/server/utils/number.js");
 const security = require("../src/server/utils/security.js");
 const symbols = require("../src/server/market/symbols.js");
 const indicators = require("../src/server/market/indicators.js");
+const aiClient = require("../src/server/ai/kimiClient.js");
 
 function candlesFromCloses(closes, { volume = 1000, bullish = true } = {}) {
   return closes.map((close, index) => {
@@ -165,5 +166,31 @@ describe("technical indicators", () => {
 
     const zeroSar = Array.from({ length: 40 }, () => ({ open: 0, close: 0, high: 0, low: 0, volume: 0 }));
     assert.equal(indicators.technicalOpportunityScore(zeroSar).sarLabel, "SAR趋势压制");
+  });
+});
+
+describe("advisor model options", () => {
+  it("builds Kimi thinking options without unsupported temperature", () => {
+    assert.deepEqual(aiClient.kimiChatOptions("kimi-k2.6", {}, "kimi-cn", { deepThinking: true }), {
+      thinking: { type: "enabled" }
+    });
+    assert.deepEqual(aiClient.kimiChatOptions("kimi-k2.6", {}, "kimi-cn", { deepThinking: false }), {
+      thinking: { type: "disabled" }
+    });
+  });
+
+  it("does not disable thinking for Kimi K2.7 code model", () => {
+    assert.deepEqual(aiClient.kimiChatOptions("kimi-k2.7-code", {}, "kimi-cn", { deepThinking: false }), {});
+    assert.deepEqual(aiClient.kimiChatOptions("kimi-k2.7-code", {}, "kimi-cn", { deepThinking: true }), {});
+  });
+
+  it("keeps non-Kimi reasoning models conservative", () => {
+    assert.deepEqual(aiClient.kimiChatOptions("deepseek-reasoner", {}, "deepseek", { deepThinking: true }), {
+      temperature: 0.25
+    });
+    assert.deepEqual(aiClient.kimiChatOptions("deepseek-chat", { response_format: { type: "json_object" } }, "deepseek"), {
+      temperature: 0.35,
+      response_format: { type: "json_object" }
+    });
   });
 });

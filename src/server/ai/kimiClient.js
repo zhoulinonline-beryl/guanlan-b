@@ -31,18 +31,26 @@ function hasAiKey() {
   return Boolean(aiConfig().apiKey);
 }
 
-function kimiChatOptions(model, base = {}, provider = aiConfig().provider) {
+function kimiChatOptions(model, base = {}, provider = aiConfig().provider, options = {}) {
   const text = String(model || "");
-  if (provider.startsWith("kimi") && /^kimi-k2\./.test(text)) {
+  const result = { ...base };
+  if (provider.startsWith("kimi") && /^kimi-k2\.7-code/i.test(text)) {
+    return result;
+  }
+  if (provider.startsWith("kimi") && /^kimi-k2\.[56]/i.test(text)) {
+    return options.deepThinking
+      ? { ...result, thinking: { type: "enabled" } }
+      : { ...result, thinking: { type: "disabled" } };
+  }
+  if (options.deepThinking && /reasoner|reasoning|r1/i.test(text)) {
     return {
-      ...base,
-      temperature: 0.6,
-      thinking: { type: "disabled" }
+      ...result,
+      temperature: 0.25
     };
   }
   return {
-    ...base,
-    temperature: 0.35
+    temperature: 0.35,
+    ...result
   };
 }
 
@@ -121,13 +129,14 @@ async function fetchWithModelRetry(providerConfig, url, options, retries = 2) {
   return response;
 }
 
-async function chatCompletion({ model, messages, temperature = 0.35, maxTokens, tools, providerConfig = aiConfig(), extra = {} }) {
+async function chatCompletion({ model, messages, temperature, maxTokens, tools, providerConfig = aiConfig(), extra = {} }) {
   const body = {
     model,
     messages,
-    temperature,
     ...extra
   };
+  if (Number.isFinite(Number(temperature))) body.temperature = Number(temperature);
+  if (!("temperature" in body) && Number.isFinite(Number(extra.temperature))) body.temperature = Number(extra.temperature);
   if (maxTokens) body.max_tokens = maxTokens;
   if (tools?.length) body.tools = tools;
   const res = await fetchWithModelRetry(providerConfig, providerConfig.apiUrl, {
