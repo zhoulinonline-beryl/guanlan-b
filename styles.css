@@ -3756,6 +3756,93 @@ button {
   animation: cursorBlink 0.9s steps(2, start) infinite;
 }
 
+.thinking-bubble {
+  display: grid;
+  gap: 12px;
+  min-width: min(520px, 100%);
+}
+
+.thinking-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thinking-title strong {
+  color: #f7fbff;
+  font-size: 14px;
+}
+
+.thinking-title em {
+  margin-left: auto;
+  color: #8fa3b2;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.thinking-steps {
+  display: grid;
+  gap: 7px;
+}
+
+.thinking-step {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 8px;
+  opacity: 0.58;
+  animation: thinkingPulse 7.2s ease-in-out infinite;
+  animation-delay: calc(var(--step) * 1.2s);
+}
+
+.thinking-step i {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(84, 163, 255, 0.12);
+  color: #9dccff;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.thinking-step strong {
+  display: block;
+  color: #eaf6ff;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.thinking-step span {
+  display: block;
+  margin-top: 2px;
+  color: #91a4b2;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+@keyframes thinkingPulse {
+  0%,
+  100% {
+    border-color: rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.025);
+    opacity: 0.58;
+  }
+
+  12%,
+  28% {
+    border-color: rgba(84, 163, 255, 0.38);
+    background: rgba(84, 163, 255, 0.095);
+    opacity: 1;
+  }
+}
+
 @keyframes cursorBlink {
   50% {
     opacity: 0.18;

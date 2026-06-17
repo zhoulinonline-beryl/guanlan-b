@@ -2626,7 +2626,7 @@ function discussionPage() {
               ${advisorChoicePanel(message, index)}
             </div>
           `).join("")}
-          ${state.advisorLoading ? `<div class="chat-message assistant"><span>观澜理财师</span><div class="chat-bubble"><span class="loader"></span> 正在判断...</div></div>` : ""}
+          ${state.advisorLoading ? advisorLoadingView(deepThinking) : ""}
         </div>
         <div class="chat-inputbar">
           <textarea data-advisor-input rows="2" placeholder="输入股票、代码或板块，例如：工业富联现在适合做T吗？半导体明天能追吗？">${escapeHtml(state.advisorInput)}</textarea>
@@ -2639,6 +2639,36 @@ function discussionPage() {
         </div>
       </div>
     </section>
+  `;
+}
+
+function advisorLoadingView(deepThinking = false) {
+  if (!deepThinking) {
+    return `<div class="chat-message assistant"><span>观澜理财师</span><div class="chat-bubble"><span class="loader"></span> 正在判断...</div></div>`;
+  }
+  const steps = [
+    ["读取上下文", "整理历史对话、持仓、详情页和本轮问题"],
+    ["核验行情", "校准最新价、板块位置和最近交易日数据"],
+    ["拆解技术面", "扫描 K线、MACD、SAR、BOLL 与牛门线"],
+    ["观察资金面", "判断主力方向、流入速度和离场风险"],
+    ["合成交易计划", "给出买点、卖点、做T区间和仓位"],
+    ["压测失效条件", "检查止损位、消息反噬和追高风险"]
+  ];
+  return `
+    <div class="chat-message assistant">
+      <span>观澜理财师</span>
+      <div class="chat-bubble thinking-bubble">
+        <div class="thinking-title"><span class="loader"></span><strong>深度思考中</strong><em>实时分析路径</em></div>
+        <div class="thinking-steps">
+          ${steps.map(([title, detail], index) => `
+            <div class="thinking-step" style="--step:${index}">
+              <i>${index + 1}</i>
+              <div><strong>${title}</strong><span>${detail}</span></div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    </div>
   `;
 }
 
