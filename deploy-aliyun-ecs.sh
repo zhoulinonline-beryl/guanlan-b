@@ -43,7 +43,7 @@ fail() {
 }
 
 warn() {
-  printf '\033[1;33m[deploy]\033[0m %s\n' "$*"
+  printf '\033[1;33m[deploy]\033[0m %s\n' "$*" >&2
 }
 
 ask() {
@@ -86,8 +86,12 @@ ask_admin_password() {
     return
   fi
   while true; do
-    password="$(ask_secret "请设置管理员密码（保护我的持股历史数据，至少 6 位；明文显示）")"
-    [[ -n "$password" ]] || fail "必须设置管理员密码，否则不能部署"
+    password="$(ask_secret "请设置管理员密码（保护我的持股历史数据，至少 6 位；明文显示；直接回车默认 123321）")"
+    if [[ -z "$password" ]]; then
+      warn "未输入管理员密码，已使用默认密码：123321。部署完成后建议到设置页修改。"
+      printf '%s' "123321"
+      return
+    fi
     [[ "${#password}" -ge 6 ]] || { warn "管理员密码至少需要 6 位"; continue; }
     confirm="$(ask_secret "请再次输入管理员密码")"
     [[ "$password" == "$confirm" ]] || { warn "两次输入不一致，请重新设置"; continue; }
