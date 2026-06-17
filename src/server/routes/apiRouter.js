@@ -14,6 +14,11 @@ function createApiRouter(deps) {
     redactLogText,
     readHoldingsStore,
     writeHoldingsStore,
+    adminLogin,
+    changeAdminPassword,
+    extractAdminToken,
+    publicAdminStatus,
+    verifyAdminToken,
     analyzeHoldings,
     parseHoldingsImageWithKimi,
     enrichParsedHoldings,
@@ -35,7 +40,66 @@ function createApiRouter(deps) {
     getStockProfile
   } = deps;
 
+  function holdingsAuthStatus(req) {
+    const store = readHoldingsStore();
+    const hasHoldings = Boolean(store.holdings.length);
+    const token = extractAdminToken(req);
+    const authenticated = token ? verifyAdminToken(token) : false;
+    return { store, hasHoldings, authenticated };
+  }
+
+  function requireHoldingsAccess(req) {
+    const status = holdingsAuthStatus(req);
+    if (status.hasHoldings && !publicAdminStatus().hasAdminPassword) {
+      const error = new Error("管理员密码尚未初始化，请先在设置中创建管理员密码");
+      error.statusCode = 401;
+      error.code = "ADMIN_SETUP_REQUIRED";
+      throw error;
+    }
+    if (status.hasHoldings && !status.authenticated) {
+      const error = new Error("需要输入管理员密码后查看历史持股");
+      error.statusCode = 401;
+      error.code = "ADMIN_AUTH_REQUIRED";
+      throw error;
+    }
+    return status;
+  }
+
+  function latestAdvisorUserText(messages = []) {
+    return (Array.isArray(messages) ? messages : [])
+      .filter((item) => item?.role === "user")
+      .slice(-4)
+      .map((item) => String(item.content || ""))
+      .join("\n");
+  }
+
+  function isAdvisorHoldingsQuestion(messages = []) {
+    const text = latestAdvisorUserText(messages);
+    return Boolean(text.trim() && /我的|持仓|持股|仓位|成本|浮盈|浮亏|被套|解套|做T|做t|卖不卖|要不要卖|要不要加|加仓|减仓|补仓|清仓|调仓|组合|账户|股票池/.test(text));
+  }
+
   const routes = [
+    ["GET", "/api/admin/status", async ({ req }) => {
+      const status = holdingsAuthStatus(req);
+      return {
+        data: {
+          ...publicAdminStatus(),
+          hasHoldings: status.hasHoldings,
+          holdingsUpdatedAt: status.store.updatedAt,
+          authenticated: status.authenticated || !status.hasHoldings
+        }
+      };
+    }],
+    ["POST", "/api/admin/login", async ({ req }) => {
+      const body = await readJsonBody(req);
+      const session = adminLogin(body.password || "");
+      return { data: { ...session, ...publicAdminStatus() } };
+    }],
+    ["POST", "/api/admin/password", async ({ req }) => {
+      const body = await readJsonBody(req);
+      const status = changeAdminPassword(body.oldPassword || "", body.newPassword || "");
+      return { data: status };
+    }],
     ["GET", "/api/settings", async () => ({ data: publicSettings() })],
     ["POST", "/api/settings", async ({ req }) => {
       const body = await readJsonBody(req);
@@ -67,7 +131,21 @@ function createApiRouter(deps) {
     ["POST", "/api/advisor-chat", async ({ req, res }) => {
       const body = await readJsonBody(req);
       try {
-        const data = await advisorChat(body.messages || [], body.contexts || body.context || []);
+        const holdingsAuth = holdingsAuthStatus(req);
+        if (holdingsAuth.hasHoldings && !holdingsAuth.authenticated && isAdvisorHoldingsQuestion(body.messages || [])) {
+          return {
+            data: {
+              role: "assistant",
+              content: "没有管理员授权，暂时不能读取我的持股数据。请先完成管理员密码验证。",
+              holdingsAuthRequired: true,
+              holdingsContextUsed: false,
+              holdingsContextCount: 0
+            }
+          };
+        }
+        const data = await advisorChat(body.messages || [], body.contexts || body.context || [], {
+          holdingsAuthorized: holdingsAuth.authenticated || !holdingsAuth.hasHoldings
+        });
         return { data };
       } catch (error) {
         const log = error.advisorLog || {
@@ -81,13 +159,14 @@ function createApiRouter(deps) {
         return { handled: true };
       }
     }],
-    ["GET", "/api/holdings", async ({ url }) => {
-      const store = readHoldingsStore();
+    ["GET", "/api/holdings", async ({ req, url }) => {
+      const { store } = requireHoldingsAccess(req);
       const withNews = url.searchParams.get("news") === "1";
       const data = await analyzeHoldings(store.holdings, { parser: store.holdings.length ? (withNews ? "saved+ai" : "saved+fast") : "saved", withNews });
       return { data: { ...data, savedAt: store.updatedAt } };
     }],
     ["POST", "/api/holdings/import-image", async ({ req }) => {
+      requireHoldingsAccess(req);
       const body = await readJsonBody(req);
       const parsed = await parseHoldingsImageWithKimi(body.imageData || "");
       const enriched = await enrichParsedHoldings(parsed);
@@ -96,13 +175,15 @@ function createApiRouter(deps) {
       return { data: { ...data, savedAt: store.updatedAt } };
     }],
     ["POST", "/api/holdings/import-text", async ({ req }) => {
+      requireHoldingsAccess(req);
       const body = await readJsonBody(req);
       const parsed = await parsePortfolioHoldings(body.text || "");
       const store = writeHoldingsStore(parsed);
       const data = await analyzeHoldings(store.holdings, { parser: hasAiKey() ? "ai+rules" : "rules", withNews: false });
       return { data: { ...data, savedAt: store.updatedAt } };
     }],
-    ["DELETE", "/api/holdings", async () => {
+    ["DELETE", "/api/holdings", async ({ req }) => {
+      requireHoldingsAccess(req);
       const store = writeHoldingsStore([]);
       return { data: { rows: [], summary: null, parser: "saved", savedAt: store.updatedAt } };
     }],
@@ -234,7 +315,7 @@ function createApiRouter(deps) {
       if (result?.handled) return;
       okJson(res, result?.data, result?.extra || {});
     } catch (error) {
-      errorJson(res, 502, error);
+      errorJson(res, error.statusCode || 502, error, error.code ? { code: error.code } : {});
     }
   };
 }

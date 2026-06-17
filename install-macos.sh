@@ -67,6 +67,53 @@ ask_yes_no() {
   esac
 }
 
+ask_admin_password() {
+  local password confirm
+  if [[ -n "${ADMIN_PASSWORD:-}" ]]; then
+    [[ "${#ADMIN_PASSWORD}" -ge 6 ]] || fail "ADMIN_PASSWORD 至少需要 6 位"
+    printf '%s' "$ADMIN_PASSWORD"
+    return
+  fi
+  while true; do
+    password="$(ask_secret "请设置管理员密码（保护我的持股历史数据，至少 6 位；明文显示）")"
+    [[ -n "$password" ]] || fail "必须设置管理员密码，否则不能安装"
+    [[ "${#password}" -ge 6 ]] || { warn "管理员密码至少需要 6 位"; continue; }
+    confirm="$(ask_secret "请再次输入管理员密码")"
+    [[ "$password" == "$confirm" ]] || { warn "两次输入不一致，请重新设置"; continue; }
+    printf '%s' "$password"
+    return
+  done
+}
+
+write_admin_password_file() {
+  local admin_password="$1"
+  log "写入管理员密码哈希：${APP_DIR}/data/admin.json"
+  ADMIN_PASSWORD_VALUE="$admin_password" ADMIN_FILE_PATH="${APP_DIR}/data/admin.json" node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+const password = String(process.env.ADMIN_PASSWORD_VALUE || "").trim();
+if (password.length < 6) {
+  console.error("管理员密码至少需要 6 位");
+  process.exit(1);
+}
+const salt = crypto.randomBytes(16).toString("hex");
+const iterations = 120000;
+const digest = crypto.pbkdf2Sync(password, salt, iterations, 32, "sha256").toString("hex");
+const file = process.env.ADMIN_FILE_PATH;
+fs.mkdirSync(path.dirname(file), { recursive: true });
+fs.writeFileSync(file, `${JSON.stringify({
+  algorithm: "pbkdf2-sha256",
+  iterations,
+  salt,
+  digest,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString()
+}, null, 2)}\n`);
+NODE
+  chmod 600 "${APP_DIR}/data/admin.json"
+}
+
 choose_ai_provider() {
   local preset="${AI_PROVIDER:-$AI_PROVIDER_DEFAULT}"
   local default_choice="1"
@@ -156,8 +203,9 @@ sync_app_files() {
 }
 
 write_env_and_settings() {
-  local ai_provider provider_label api_key api_url text_model vision_model advisor_model market_source use_cache_bool use_cache_text
+  local ai_provider provider_label api_key api_url text_model vision_model advisor_model market_source use_cache_bool use_cache_text admin_password
   local kimi_api_key kimi_api_url kimi_model kimi_vision_model
+  admin_password="$(ask_admin_password)"
   ai_provider="$(choose_ai_provider)"
   case "$ai_provider" in
     kimi|kimi-cn)
@@ -270,6 +318,7 @@ EOF
   if [[ ! -f "${APP_DIR}/data/cache.json" ]]; then
     printf '{\n  "items": []\n}\n' > "${APP_DIR}/data/cache.json"
   fi
+  write_admin_password_file "$admin_password"
 
   log "写入 ${APP_DIR}/data/settings.json"
   cat > "${APP_DIR}/data/settings.json" <<EOF

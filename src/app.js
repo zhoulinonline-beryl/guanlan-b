@@ -1,4 +1,5 @@
 import { sectorReasons, stockAdvice } from "./analytics.js";
+import { holdingsUnauthorizedMessage, shouldRequestHoldingsAuth } from "./shared/advisorAuth.mjs";
 
 const app = document.querySelector("#app");
 let stockChartPointer = null;
@@ -7,6 +8,7 @@ let skipAdvisorFocusRestoreOnce = false;
 let advisorAbortController = null;
 let advisorStreamTimer = null;
 let advisorStreamRunId = 0;
+let advisorDeferredRender = false;
 const state = {
   page: "home",
   window: 5,
@@ -31,15 +33,25 @@ const state = {
   advisorLoading: false,
   advisorComposing: false,
   advisorStreaming: false,
+  advisorAuthPrompt: null,
+  advisorAuthPassword: "",
+  advisorAuthLoading: false,
+  advisorAuthError: "",
   settings: null,
   settingsDraft: null,
   settingsLoading: false,
   settingsSaving: false,
+  adminAuthToken: sessionStorage.getItem("guanlanAdminToken") || "",
+  adminHoldingsAuthorized: sessionStorage.getItem("guanlanAdminHoldingsAuthorized") === "1",
+  adminStatus: null,
+  adminPasswordInput: "",
+  adminUnlocking: false,
   portfolioText: "",
   portfolioRows: [],
   portfolioSummary: null,
   portfolioParser: "",
   portfolioSavedAt: "",
+  portfolioLocked: false,
   portfolioLoading: false,
   ocrLoading: false,
   ocrProgress: "",
@@ -94,6 +106,11 @@ function update(patch) {
   }
   Object.assign(state, patch);
   render(scrollAnchor);
+}
+
+function isAdvisorComposingActive() {
+  const input = document.querySelector("[data-advisor-input]");
+  return state.page === "discussion" && state.advisorComposing && input && document.activeElement === input;
 }
 
 function clampScroll(value, max) {
@@ -207,6 +224,11 @@ function restoreAdvisorFocus(snapshot) {
   requestAnimationFrame(() => {
     const input = document.querySelector("[data-advisor-input]");
     if (!input) return;
+    if (snapshot.composing) {
+      input.focus({ preventScroll: true });
+      state.advisorComposing = true;
+      return;
+    }
     input.value = snapshot.value;
     state.advisorInput = snapshot.value;
     input.focus({ preventScroll: true });
@@ -226,6 +248,10 @@ function focusAdvisorInput({ preserve = true } = {}) {
   requestAnimationFrame(() => {
     const input = document.querySelector("[data-advisor-input]");
     if (!input) return;
+    if (state.advisorComposing) {
+      input.focus({ preventScroll: true });
+      return;
+    }
     const start = preserve && Number.isFinite(input.selectionStart) ? input.selectionStart : input.value.length;
     const end = preserve && Number.isFinite(input.selectionEnd) ? input.selectionEnd : start;
     input.focus({ preventScroll: true });
@@ -711,8 +737,50 @@ function closeTopOverlay() {
 async function api(path) {
   const res = await fetch(path, { cache: "no-store" });
   const json = await res.json();
-  if (!json.ok) throw new Error(json.error || "行情接口异常");
+  if (!json.ok) {
+    const error = new Error(json.error || "行情接口异常");
+    error.code = json.code || "";
+    error.status = res.status;
+    throw error;
+  }
   return json;
+}
+
+function adminHeaders(headers = {}) {
+  return state.adminAuthToken ? { ...headers, "X-Admin-Token": state.adminAuthToken } : headers;
+}
+
+async function adminFetch(path, options = {}) {
+  const res = await fetch(path, {
+    ...options,
+    cache: "no-store",
+    headers: adminHeaders(options.headers || {})
+  });
+  const json = await res.json();
+  if (!json.ok) {
+    const error = new Error(json.error || "请求失败");
+    error.code = json.code || "";
+    error.status = res.status;
+    throw error;
+  }
+  return json;
+}
+
+function handleAdminRequired(error) {
+  if (error.status !== 401 && !["ADMIN_AUTH_REQUIRED", "ADMIN_SETUP_REQUIRED"].includes(error.code)) return false;
+  sessionStorage.removeItem("guanlanAdminToken");
+  sessionStorage.removeItem("guanlanAdminHoldingsAuthorized");
+  update({
+    adminAuthToken: "",
+    adminHoldingsAuthorized: false,
+    portfolioLocked: true,
+    portfolioLoading: false,
+    portfolioRows: [],
+    portfolioSummary: null,
+    portfolioParser: "",
+    error: error.code === "ADMIN_SETUP_REQUIRED" ? error.message : ""
+  });
+  return true;
 }
 
 async function loadSectors({ silent = false, clearStockCache = false, deferForOverlay = false } = {}) {
@@ -871,17 +939,23 @@ async function recognizePositionImage(file) {
     update({ ocrProgress: "图片已读取，AI 模型正在识别名称、成本价和持有数量..." });
     const res = await fetch("/api/holdings/import-image", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: adminHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ imageData })
     });
     update({ ocrProgress: "识别完成，正在保存持股并刷新操作建议..." });
     const json = await res.json();
-    if (!json.ok) throw new Error(json.error || "AI 识别失败");
+    if (!json.ok) {
+      const error = new Error(json.error || "AI 识别失败");
+      error.status = res.status;
+      error.code = json.code || "";
+      throw error;
+    }
     applyPortfolioPayload(json.data, json.updatedAt, "Kimi 已更新并保存我的持股");
     setTimeout(() => {
       if (!state.ocrLoading && state.modalPortfolioUpdate) update({ modalPortfolioUpdate: false });
     }, 700);
   } catch (error) {
+    if (handleAdminRequired(error)) return;
     update({ ocrLoading: false, portfolioLoading: false, ocrProgress: error.message });
   }
 }
@@ -893,11 +967,16 @@ async function analyzePortfolioText(textOverride = null) {
   try {
     const res = await fetch("/api/holdings/import-text", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: adminHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ text: state.portfolioText })
     });
     const json = await res.json();
-    if (!json.ok) throw new Error(json.error || "仓位分析失败");
+    if (!json.ok) {
+      const error = new Error(json.error || "仓位分析失败");
+      error.status = res.status;
+      error.code = json.code || "";
+      throw error;
+    }
     const payload = Array.isArray(json.data) ? { rows: json.data, summary: null, parser: "rules" } : json.data || {};
     applyPortfolioPayload(payload, json.updatedAt, payload.rows?.length ? "文本已解析并保存为我的持股" : state.ocrProgress);
     if (payload.rows?.length) {
@@ -906,6 +985,7 @@ async function analyzePortfolioText(textOverride = null) {
       }, 700);
     }
   } catch (error) {
+    if (handleAdminRequired(error)) return;
     update({ portfolioLoading: false, error: error.message });
   }
 }
@@ -926,19 +1006,79 @@ function applyPortfolioPayload(payload = {}, updatedAt = "", progress = "") {
 async function loadHoldings({ silent = false } = {}) {
   if (!silent) update({ portfolioLoading: true, error: "" });
   try {
-    const json = await api("/api/holdings?fast=1");
+    const json = await adminFetch("/api/holdings?fast=1");
+    update({ portfolioLocked: false });
     applyPortfolioPayload(json.data, json.updatedAt, silent ? state.ocrProgress : "");
   } catch (error) {
+    if (handleAdminRequired(error)) return;
     update({ portfolioLoading: false, error: error.message });
+  }
+}
+
+async function loadAdminStatus() {
+  try {
+    const json = await adminFetch("/api/admin/status");
+    if (json.data?.authenticated) {
+      sessionStorage.setItem("guanlanAdminHoldingsAuthorized", "1");
+    } else if (json.data?.hasHoldings) {
+      sessionStorage.removeItem("guanlanAdminHoldingsAuthorized");
+    }
+    update({
+      adminStatus: json.data,
+      adminHoldingsAuthorized: Boolean(json.data?.authenticated),
+      portfolioLocked: Boolean(json.data?.hasHoldings && !json.data?.authenticated),
+      portfolioSavedAt: json.data?.holdingsUpdatedAt || state.portfolioSavedAt
+    });
+    return json.data;
+  } catch (error) {
+    update({ error: error.message });
+    return null;
+  }
+}
+
+async function unlockPortfolio() {
+  const password = String(document.querySelector("[data-admin-password]")?.value || state.adminPasswordInput || "").trim();
+  if (!password) {
+    showToast("请输入管理员密码");
+    return;
+  }
+  update({ adminUnlocking: true, error: "" });
+  try {
+    const res = await fetch("/api/admin/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password })
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || "管理员密码错误");
+    sessionStorage.setItem("guanlanAdminToken", json.data.token);
+    sessionStorage.setItem("guanlanAdminHoldingsAuthorized", "1");
+    update({
+      adminAuthToken: json.data.token,
+      adminHoldingsAuthorized: true,
+      adminStatus: { ...(state.adminStatus || {}), ...json.data, authenticated: true },
+      adminPasswordInput: "",
+      adminUnlocking: false,
+      portfolioLocked: false
+    });
+    showToast("已解锁我的持股");
+    loadHoldings();
+  } catch (error) {
+    update({ adminUnlocking: false, error: error.message });
   }
 }
 
 async function clearHoldings() {
   update({ portfolioLoading: true, error: "" });
   try {
-    const res = await fetch("/api/holdings", { method: "DELETE" });
+    const res = await fetch("/api/holdings", { method: "DELETE", headers: adminHeaders() });
     const json = await res.json();
-    if (!json.ok) throw new Error(json.error || "清空持股失败");
+    if (!json.ok) {
+      const error = new Error(json.error || "清空持股失败");
+      error.status = res.status;
+      error.code = json.code || "";
+      throw error;
+    }
     update({
       portfolioText: "",
       portfolioRows: [],
@@ -950,6 +1090,7 @@ async function clearHoldings() {
       updatedAt: json.updatedAt
     });
   } catch (error) {
+    if (handleAdminRequired(error)) return;
     update({ portfolioLoading: false, error: error.message });
   }
 }
@@ -977,8 +1118,17 @@ async function loadRecommendations({ force = false } = {}) {
 async function loadSettings() {
   update({ settingsLoading: true, error: "" });
   try {
-    const json = await api("/api/settings");
-    update({ settings: json.data, settingsDraft: { ...json.data, apiKey: "", kimiApiKey: "" }, settingsLoading: false, updatedAt: json.updatedAt || state.updatedAt });
+    const [settingsJson, adminJson] = await Promise.all([
+      api("/api/settings"),
+      adminFetch("/api/admin/status")
+    ]);
+    update({
+      settings: { ...settingsJson.data, admin: adminJson.data },
+      adminStatus: adminJson.data,
+      settingsDraft: { ...settingsJson.data, admin: adminJson.data, apiKey: "", kimiApiKey: "", adminOldPassword: "", adminNewPassword: "", adminConfirmPassword: "" },
+      settingsLoading: false,
+      updatedAt: settingsJson.updatedAt || state.updatedAt
+    });
   } catch (error) {
     update({ settingsLoading: false, error: error.message });
   }
@@ -988,6 +1138,24 @@ async function saveSettings() {
   const draft = collectSettingsDraft();
   update({ settingsSaving: true, error: "" });
   try {
+    const wantsPasswordChange = String(draft.adminNewPassword || draft.adminConfirmPassword || draft.adminOldPassword || "").trim();
+    if (wantsPasswordChange) {
+      if (state.adminStatus?.hasAdminPassword && !draft.adminOldPassword) throw new Error("修改管理员密码前需要输入原密码");
+      if (!draft.adminNewPassword || String(draft.adminNewPassword).length < 6) throw new Error("新管理员密码至少需要 6 位");
+      if (draft.adminNewPassword !== draft.adminConfirmPassword) throw new Error("两次输入的新管理员密码不一致");
+      const passwordRes = await fetch("/api/admin/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ oldPassword: draft.adminOldPassword, newPassword: draft.adminNewPassword })
+      });
+      const passwordJson = await passwordRes.json();
+      if (!passwordJson.ok) throw new Error(passwordJson.error || "管理员密码修改失败");
+      sessionStorage.removeItem("guanlanAdminToken");
+      sessionStorage.removeItem("guanlanAdminHoldingsAuthorized");
+      state.adminAuthToken = "";
+      state.adminHoldingsAuthorized = false;
+      state.adminStatus = passwordJson.data;
+    }
     const res = await fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1011,8 +1179,15 @@ async function saveSettings() {
     });
     const json = await res.json();
     if (!json.ok) throw new Error(json.error || "保存设置失败");
-    update({ settings: json.data, settingsDraft: { ...json.data, apiKey: "", kimiApiKey: "" }, settingsSaving: false, updatedAt: json.updatedAt || state.updatedAt });
-    showToast("设置已保存");
+    const adminJson = await adminFetch("/api/admin/status");
+    update({
+      settings: { ...json.data, admin: adminJson.data },
+      adminStatus: adminJson.data,
+      settingsDraft: { ...json.data, admin: adminJson.data, apiKey: "", kimiApiKey: "", adminOldPassword: "", adminNewPassword: "", adminConfirmPassword: "" },
+      settingsSaving: false,
+      updatedAt: json.updatedAt || state.updatedAt
+    });
+    showToast(wantsPasswordChange ? "设置已保存，管理员密码已更新" : "设置已保存");
   } catch (error) {
     update({ settingsSaving: false, error: error.message });
   }
@@ -1040,6 +1215,82 @@ async function sendAdvisorMessage(contentOverride = "") {
     return;
   }
   const nextMessages = [...state.advisorMessages, { role: "user", content }];
+  if (await maybePromptAdvisorHoldingsAuth(content, nextMessages)) return;
+  sendAdvisorMessages(nextMessages);
+}
+
+async function maybePromptAdvisorHoldingsAuth(content, nextMessages) {
+  if (!shouldRequestHoldingsAuth({ text: content, hasHoldings: true, authenticated: state.adminHoldingsAuthorized })) return false;
+  const statusJson = await adminFetch("/api/admin/status").catch(() => null);
+  const status = statusJson?.data || state.adminStatus || {};
+  const authenticated = Boolean(status.authenticated);
+  update({
+    adminStatus: status,
+    adminHoldingsAuthorized: authenticated
+  });
+  if (!shouldRequestHoldingsAuth({ text: content, hasHoldings: Boolean(status.hasHoldings), authenticated })) return false;
+  const prompt = {
+    role: "assistant",
+    content: holdingsUnauthorizedMessage({ hasAdminPassword: status.hasAdminPassword !== false }),
+    authPrompt: true,
+    hasAdminPassword: status.hasAdminPassword !== false
+  };
+  update({
+    advisorMessages: [...nextMessages, prompt],
+    advisorInput: "",
+    advisorAuthPrompt: { pendingMessages: nextMessages },
+    advisorAuthPassword: "",
+    advisorAuthError: "",
+    advisorAuthLoading: false,
+    error: ""
+  });
+  scrollChatToBottom({ smooth: true });
+  setTimeout(() => {
+    const input = document.querySelector("[data-advisor-auth-password]");
+    input?.focus({ preventScroll: true });
+  }, 60);
+  return true;
+}
+
+async function verifyAdvisorHoldingsAuth() {
+  const password = String(document.querySelector("[data-advisor-auth-password]")?.value || state.advisorAuthPassword || "").trim();
+  if (!password) {
+    update({ advisorAuthError: "请输入管理员密码" });
+    return;
+  }
+  update({ advisorAuthLoading: true, advisorAuthError: "" });
+  try {
+    const res = await fetch("/api/admin/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password })
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || "没有管理员授权，暂时不能读取我的持股数据。");
+    sessionStorage.setItem("guanlanAdminToken", json.data.token);
+    sessionStorage.setItem("guanlanAdminHoldingsAuthorized", "1");
+    const pendingMessages = state.advisorAuthPrompt?.pendingMessages || [];
+    update({
+      adminAuthToken: json.data.token,
+      adminHoldingsAuthorized: true,
+      adminStatus: { ...(state.adminStatus || {}), ...json.data, authenticated: true },
+      advisorAuthPrompt: null,
+      advisorAuthPassword: "",
+      advisorAuthLoading: false,
+      advisorAuthError: "",
+      advisorMessages: state.advisorMessages.filter((message) => !message.authPrompt)
+    });
+    showToast("管理员授权已通过");
+    if (pendingMessages.length) sendAdvisorMessages(pendingMessages);
+  } catch (error) {
+    update({
+      advisorAuthLoading: false,
+      advisorAuthError: "没有管理员授权，暂时不能读取我的持股数据。"
+    });
+  }
+}
+
+async function sendAdvisorMessages(nextMessages) {
   update({ advisorMessages: nextMessages, advisorInput: "", advisorLoading: true, error: "" });
   scrollChatToBottom({ smooth: true });
   focusAdvisorInput({ preserve: false });
@@ -1047,7 +1298,7 @@ async function sendAdvisorMessage(contentOverride = "") {
   try {
     const res = await fetch("/api/advisor-chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: adminHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ messages: nextMessages, contexts: state.advisorContexts }),
       signal: advisorAbortController.signal
     });
@@ -1056,6 +1307,18 @@ async function sendAdvisorMessage(contentOverride = "") {
       const error = new Error(json.error || "观澜理财师回复失败");
       error.advisorLog = json.log || null;
       throw error;
+    }
+    if (json.data?.holdingsAuthRequired) {
+      advisorAbortController = null;
+      update({
+        advisorMessages: [...nextMessages, { role: "assistant", content: json.data.content || "没有管理员授权，暂时不能读取我的持股数据。" }],
+        advisorLoading: false,
+        advisorStreaming: false,
+        updatedAt: json.updatedAt || state.updatedAt
+      });
+      scrollChatToBottom({ smooth: true });
+      focusAdvisorInput();
+      return;
     }
     const streamingMessages = [...nextMessages, { ...json.data, content: "", streaming: true }];
     advisorAbortController = null;
@@ -1163,6 +1426,10 @@ function clearAdvisorChat() {
   update({
     advisorInput: "",
     advisorContexts: [],
+    advisorAuthPrompt: null,
+    advisorAuthPassword: "",
+    advisorAuthLoading: false,
+    advisorAuthError: "",
     advisorMessages: [
       { role: "assistant", content: "说股票或板块，直接给我代码/名称和你的持仓情况。我会按偏激进短线思路给结论、价位和风控。" }
     ]
@@ -1826,6 +2093,7 @@ function discussionPage() {
             <div class="chat-message ${message.role}">
               <span>${message.role === "user" ? "你" : "观澜理财师"}</span>
               <div class="chat-bubble" data-chat-content="${index}">${formatChatText(message.content)}${message.streaming ? `<span class="typing-cursor"></span>` : ""}</div>
+              ${advisorAuthPanel(message)}
               ${advisorChoicePanel(message, index)}
             </div>
           `).join("")}
@@ -1837,6 +2105,34 @@ function discussionPage() {
         </div>
       </div>
     </section>
+  `;
+}
+
+function advisorAuthPanel(message = {}) {
+  if (!message.authPrompt) return "";
+  if (message.hasAdminPassword === false) {
+    return `
+      <div class="advisor-auth-panel">
+        <div>
+          <strong>需要初始化管理员密码</strong>
+          <span>完成后才能在个股讨论中读取我的持股。</span>
+        </div>
+        <button class="primary" data-page="settings">去设置</button>
+      </div>
+    `;
+  }
+  return `
+    <div class="advisor-auth-panel">
+      <div>
+        <strong>管理员验证</strong>
+        <span>通过后，本浏览器 session 内访问我的持股和个股讨论都不再重复验证。</span>
+      </div>
+      <div class="advisor-auth-form">
+        <input type="password" data-advisor-auth-password value="${escapeHtml(state.advisorAuthPassword || "")}" placeholder="输入管理员密码" autocomplete="current-password" />
+        <button class="primary" data-action="verify-advisor-holdings-auth" ${state.advisorAuthLoading ? "disabled" : ""}>${state.advisorAuthLoading ? "验证中..." : "验证并继续"}</button>
+      </div>
+      ${state.advisorAuthError ? `<small class="advisor-auth-error">${escapeHtml(state.advisorAuthError)}</small>` : ""}
+    </div>
   `;
 }
 
@@ -2059,6 +2355,7 @@ function settingsPage() {
   const providers = draft.aiProviders || state.settings?.aiProviders || {};
   const provider = draft.aiProvider === "kimi" ? "kimi-cn" : (draft.aiProvider || "kimi-cn");
   const providerInfo = providers[provider] || {};
+  const admin = draft.admin || state.adminStatus || {};
   const providerOptions = Object.entries(providers).length ? Object.entries(providers) : [
     ["kimi-cn", { label: "Kimi 国内版 / Moonshot CN" }],
     ["kimi-intl", { label: "Kimi 国际版 / Moonshot AI" }],
@@ -2103,6 +2400,10 @@ function settingsPage() {
           <div class="settings-summary-card">
             <span>缓存</span>
             <strong>${draft.useCache !== false ? "开启" : "关闭"}</strong>
+          </div>
+          <div class="settings-summary-card">
+            <span>管理员密码</span>
+            <strong>${admin.hasAdminPassword ? "已设置" : "未设置"}</strong>
           </div>
         </div>
         <div class="settings-content-grid">
@@ -2163,6 +2464,28 @@ function settingsPage() {
                 <textarea data-setting="advisorStyle" rows="4">${escapeHtml(draft.advisorStyle || "")}</textarea>
               </label>
             </section>
+            <section class="settings-section">
+              <div class="settings-section-title">
+                <h2>管理员密码</h2>
+                <span>保护历史持股和仓位数据</span>
+              </div>
+              <label class="setting-row">
+                <span><strong>${admin.hasAdminPassword ? "原密码" : "原密码"}</strong><small>${admin.hasAdminPassword ? "修改前必须验证当前管理员密码" : "首次创建可留空"}</small></span>
+                <input type="password" data-setting="adminOldPassword" value="${escapeHtml(draft.adminOldPassword || "")}" placeholder="${admin.hasAdminPassword ? "输入当前管理员密码" : "首次创建无需填写"}" autocomplete="current-password" />
+              </label>
+              <label class="setting-row">
+                <span><strong>新密码</strong><small>至少 6 位，留空则不修改</small></span>
+                <input type="password" data-setting="adminNewPassword" value="${escapeHtml(draft.adminNewPassword || "")}" placeholder="输入新管理员密码" autocomplete="new-password" />
+              </label>
+              <label class="setting-row">
+                <span><strong>确认新密码</strong><small>再次输入新管理员密码</small></span>
+                <input type="password" data-setting="adminConfirmPassword" value="${escapeHtml(draft.adminConfirmPassword || "")}" placeholder="再次输入新密码" autocomplete="new-password" />
+              </label>
+              <div class="setting-note">
+                ${admin.updatedAt ? `最近修改：${new Date(admin.updatedAt).toLocaleString("zh-CN")}。` : "管理员密码由安装/部署脚本强制设置。"}
+                修改成功后，当前浏览器的持股解锁状态会失效，需要重新输入新密码。
+              </div>
+            </section>
           </div>
           <aside class="settings-side-column">
             <section class="settings-section">
@@ -2206,6 +2529,7 @@ function settingsPage() {
 
 function portfolioPage() {
   const summary = state.portfolioSummary;
+  if (state.portfolioLocked) return portfolioLockedView();
   return `
     <section class="portfolio-action-bar">
       <div>
@@ -2229,6 +2553,33 @@ function portfolioPage() {
         </div>
       </div>
       ${state.portfolioLoading && !state.modalPortfolioUpdate ? loadingView() : state.portfolioRows.length ? portfolioResult(state.portfolioRows, state.portfolioSummary) : `<div class="empty">点击“更新持股”上传截图后，这里会显示持股诊断和每只股票做T建议。</div>`}
+    </section>
+  `;
+}
+
+function portfolioLockedView() {
+  const updatedAt = state.adminStatus?.holdingsUpdatedAt || state.portfolioSavedAt;
+  const needsSetup = state.adminStatus && state.adminStatus.hasAdminPassword === false;
+  return `
+    <section class="portfolio-lock panel">
+      <div class="portfolio-lock-card">
+        <div class="portfolio-lock-mark">${icons.lock || icons.settings}</div>
+        <div>
+          <span>我的持股已保护</span>
+          <h2>${needsSetup ? "请先设置管理员密码" : "请输入管理员密码"}</h2>
+          <p>${needsSetup ? "检测到历史持股，但当前应用还没有管理员密码。请先到设置页创建管理员密码，然后再回到我的持股解锁。" : "检测到本地保存过历史持股数据。为保护成本价、持有数量和仓位建议，进入前需要先完成管理员验证。"}</p>
+          ${updatedAt ? `<small>历史持股最近更新：${new Date(updatedAt).toLocaleString("zh-CN")}</small>` : ""}
+        </div>
+        ${needsSetup ? "" : `<label>
+          <span>管理员密码</span>
+          <input type="password" data-admin-password value="${escapeHtml(state.adminPasswordInput || "")}" placeholder="输入部署时设置的管理员密码" autocomplete="current-password" />
+        </label>`}
+        <div class="portfolio-lock-actions">
+          ${needsSetup
+            ? `<button class="primary" data-page="settings">去设置管理员密码</button>`
+            : `<button class="primary" data-action="unlock-portfolio" ${state.adminUnlocking ? "disabled" : ""}>${state.adminUnlocking ? "验证中..." : "解锁我的持股"}</button>`}
+        </div>
+      </div>
     </section>
   `;
 }
@@ -3389,6 +3740,10 @@ function drawIndexChart(index) {
 }
 
 function render(scrollAnchor = captureScrollAnchors()) {
+  if (isAdvisorComposingActive()) {
+    advisorDeferredRender = true;
+    return;
+  }
   const advisorFocus = skipAdvisorFocusRestoreOnce ? null : captureAdvisorFocus();
   const stockScroll = captureStockModalScroll();
   skipAdvisorFocusRestoreOnce = false;
@@ -3447,7 +3802,10 @@ app.addEventListener("click", (event) => {
   if (page) {
     update({ page });
     if (page === "recommend") loadRecommendations();
-    if (page === "portfolio") loadHoldings();
+    if (page === "portfolio") {
+      loadAdminStatus();
+      loadHoldings();
+    }
     if (page === "settings") loadSettings();
   }
   if (sectorId) {
@@ -3488,11 +3846,13 @@ app.addEventListener("click", (event) => {
     if (state.page === "recommend") setTimeout(() => loadRecommendations({ force: true }), 0);
   }
   if (event.target.closest("[data-action='analyze-portfolio']")) analyzePortfolioText();
+  if (event.target.closest("[data-action='unlock-portfolio']")) unlockPortfolio();
   if (event.target.closest("[data-action='open-portfolio-update']")) update({ modalPortfolioUpdate: true, ocrProgress: "" });
   if (event.target.closest("[data-action='reload-portfolio']")) loadHoldings();
   if (event.target.closest("[data-action='clear-portfolio']")) clearHoldings();
   if (event.target.closest("[data-action='save-settings']")) saveSettings();
   if (event.target.closest("[data-action='send-advisor-message']")) sendAdvisorMessage();
+  if (event.target.closest("[data-action='verify-advisor-holdings-auth']")) verifyAdvisorHoldingsAuth();
   if (event.target.closest("[data-action='clear-advisor-chat']")) clearAdvisorChat();
   const choiceOption = event.target.closest("[data-choice-option]");
   if (choiceOption) {
@@ -3579,6 +3939,9 @@ app.addEventListener("input", (event) => {
   if (event.target.matches("[data-portfolio-text]")) {
     state.portfolioText = event.target.value;
   }
+  if (event.target.matches("[data-admin-password]")) {
+    state.adminPasswordInput = event.target.value;
+  }
   if (event.target.matches("[data-sector-search]")) {
     state.sectorSearchDraft = event.target.value;
     updateSectorSearchDraftStatus(event.target.value);
@@ -3592,6 +3955,9 @@ app.addEventListener("input", (event) => {
   if (event.target.matches("[data-advisor-input]")) {
     state.advisorInput = event.target.value;
   }
+  if (event.target.matches("[data-advisor-auth-password]")) {
+    state.advisorAuthPassword = event.target.value;
+  }
 });
 
 app.addEventListener("compositionstart", (event) => {
@@ -3604,6 +3970,18 @@ app.addEventListener("compositionend", (event) => {
   if (event.target.matches("[data-advisor-input]")) {
     state.advisorComposing = false;
     state.advisorInput = event.target.value;
+    if (advisorDeferredRender) {
+      advisorDeferredRender = false;
+      render();
+      focusAdvisorInput();
+    }
+  }
+});
+
+app.addEventListener("keydown", (event) => {
+  if (event.target.matches("[data-admin-password]") && event.key === "Enter") {
+    event.preventDefault();
+    unlockPortfolio();
   }
 });
 
@@ -3617,6 +3995,10 @@ app.addEventListener("keydown", (event) => {
     if (state.advisorLoading || state.advisorStreaming) return;
     event.preventDefault();
     sendAdvisorMessage();
+  }
+  if (event.target.matches("[data-advisor-auth-password]") && event.key === "Enter") {
+    event.preventDefault();
+    verifyAdvisorHoldingsAuth();
   }
 });
 

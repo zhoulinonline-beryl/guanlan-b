@@ -29,13 +29,14 @@
 
 - **股票推荐**
   - 后台每 15 分钟在交易时段扫描一次全板块候选。
-  - 推荐主力方向明显、技术面允许建仓的股票。
+  - 展示 Top20 最适合建仓股票，推荐主力方向明显、技术面允许建仓的候选。
   - 买入机会分结合板块强度、主力净额、主力占比、流入/离场速度、MACD、SAR 等因素。
 
 - **我的持股**
   - 支持上传持股截图。
   - 使用已配置的视觉模型识别股票名称、成本价、持有数量。
   - 基于当前最新价、成本价和持有数量分析盈亏、仓位、做 T 档位和风险。
+  - 如果本地已经保存过历史持股，进入页面前需要输入管理员密码解锁。
 
 - **个股讨论**
   - 支持使用 Kimi 国内版、Kimi 国际版、DeepSeek、MiniMax、GLM 作为观澜理财师。
@@ -47,6 +48,7 @@
 - **设置**
   - 支持配置模型供应商、API 地址、文本模型、视觉模型、观澜理财师模型。
   - 支持配置观澜理财师角色与回复风格。
+  - 支持修改管理员密码；修改前必须验证原管理员密码。
   - 支持手动切换行情数据源：自动兜底、腾讯、东方财富、新浪/搜狐。
   - 支持持久化缓存策略，历史行情、新闻政策和分析结果可优先从缓存读取。
 
@@ -97,7 +99,7 @@ Kimi API 版本：
 └── styles.css
 ```
 
-运行时会自动生成 `data/settings.json`、`data/cache.json`、`data/holdings.json`。这些文件可能包含 AK、缓存和持仓信息，不建议提交到 GitLab。
+运行时会自动生成 `data/settings.json`、`data/cache.json`、`data/holdings.json`、`data/admin.json`。这些文件可能包含 AK、缓存、持仓信息和管理员密码哈希，不建议提交到 GitLab。
 
 首次启动时会额外生成 `data/market-snapshot.json`，用于保存最新大盘、板块和部分股票数据；当某个实时行情源暂时不可用时，接口会尝试使用这份快照兜底，避免首页首次启动空白。
 
@@ -225,6 +227,7 @@ sudo bash deploy-aliyun-ecs.sh
 
 脚本会引导你输入：
 
+- 管理员密码：用于保护历史持股数据，必须设置，至少 6 位；未设置则安装/部署会终止
 - 模型供应商：通过 1-5 编号选择 `kimi-cn` / `kimi-intl` / `deepseek` / `minimax` / `glm`，脚本会回显已选择的供应商
 - 对应供应商 AK（明文输入，便于确认粘贴完整）
 - API 地址、OCR 地址、文本模型、OCR 模型、理财师模型
@@ -297,6 +300,7 @@ guanlan-stock-radar
 data/settings.json
 data/cache.json
 data/holdings.json
+data/admin.json
 node_modules/
 ```
 
@@ -324,7 +328,7 @@ ADVISOR_MODEL=kimi-k2.6
 NODE_ENV=production
 ```
 
-说明：`install-macos.sh` 和 `deploy-aliyun-ecs.sh` 都会先通过编号选择模型供应商，再明文输入对应 AK，便于确认供应商和密钥没有填错；脚本会把 AK 写入 `.env.local` 和 `data/settings.json`，并设置为仅当前用户可读写。
+说明：`install-macos.sh` 和 `deploy-aliyun-ecs.sh` 会强制设置管理员密码，并写入 `data/admin.json` 的哈希值；也会先通过编号选择模型供应商，再明文输入对应 AK，便于确认供应商和密钥没有填错。脚本会把 AK 写入 `.env.local` 和 `data/settings.json`，并设置为仅当前用户可读写。
 
 ## 缓存策略
 

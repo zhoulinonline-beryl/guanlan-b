@@ -26,6 +26,13 @@ const {
   writeHoldingsStore
 } = require("./src/server/storage/holdingsStore");
 const {
+  adminLogin,
+  changeAdminPassword,
+  extractAdminToken,
+  publicAdminStatus,
+  verifyAdminToken
+} = require("./src/server/storage/adminStore");
+const {
   readMarketSnapshot,
   writeMarketSnapshot,
   updateMarketSnapshot,
@@ -58,6 +65,7 @@ const execFileAsync = promisify(execFile);
 const staticTypes = {
   ".html": "text/html;charset=utf-8",
   ".js": "text/javascript;charset=utf-8",
+  ".mjs": "text/javascript;charset=utf-8",
   ".css": "text/css;charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png"
@@ -351,9 +359,8 @@ async function getLatestStockPriceContext(stock = {}) {
   };
 }
 
-async function buildMentionedStocksContext(messages = []) {
-  const store = readHoldingsStore();
-  const mentioned = await resolveMentionedStocks(extractMentionedStocks(messages, store.holdings));
+async function buildMentionedStocksContext(messages = [], holdings = []) {
+  const mentioned = await resolveMentionedStocks(extractMentionedStocks(messages, holdings));
   if (!mentioned.length) return { text: "", brief: "", used: false, count: 0 };
   const rows = [];
   const detailBlocks = [];
@@ -495,10 +502,10 @@ async function buildAdvisorSectorStocksContext(sectorNames = [], sectors = []) {
 async function buildAdvisorRecommendationsContext(shouldInclude = false) {
   if (!shouldInclude) return "";
   const rec = await refreshRecommendations({ force: false }).catch(() => null);
-  const rows = (rec?.data || []).slice(0, 10);
+  const rows = (rec?.data || []).slice(0, 20);
   if (!rows.length) return "股票推荐池暂未生成或正在刷新。";
   return [
-    "### 股票推荐池",
+    "### 股票推荐池 Top20",
     "",
     `推荐池刷新时间：${rec.refreshedAt || "--"}；下一次计划刷新：${rec.nextRefreshAt || "--"}。`,
     "| 股票 | 现价 | 涨跌幅 | 主力净额 | 主力占比 | 流入速度 | 离场速度 | 买入机会分 |",
@@ -653,7 +660,10 @@ function trustedAdvisorHoldingsBrief(rows = [], summary = {}) {
   return lines.join("\n");
 }
 
-async function buildAdvisorHoldingsContext(messages = []) {
+async function buildAdvisorHoldingsContext(messages = [], { authorized = false } = {}) {
+  if (!authorized) {
+    return { text: "", used: false, count: 0, brief: "" };
+  }
   const store = readHoldingsStore();
   const holdings = store.holdings || [];
   if (!shouldUseHoldingsContext(messages, holdings)) {
@@ -755,7 +765,7 @@ function normalizeAdvisorProvidedContexts(contexts = []) {
   };
 }
 
-async function advisorChat(messages = [], contexts = []) {
+async function advisorChat(messages = [], contexts = [], options = {}) {
   const requestId = makeRequestId("advisor");
   const startedAt = new Date().toISOString();
   const config = aiConfig();
@@ -778,6 +788,8 @@ async function advisorChat(messages = [], contexts = []) {
   }
   const userMessages = normalizeChatMessages(messages);
   const currentTime = currentSystemTimeText();
+  const holdingsAuthorized = Boolean(options.holdingsAuthorized);
+  const authorizedHoldings = holdingsAuthorized ? readHoldingsStore().holdings || [] : [];
   let providedContext;
   let appDataContext;
   let holdingsContext;
@@ -786,8 +798,8 @@ async function advisorChat(messages = [], contexts = []) {
     failureLog.stage = "build-context";
     providedContext = normalizeAdvisorProvidedContexts(contexts);
     appDataContext = await buildAdvisorAppDataContext(userMessages, providedContext);
-    holdingsContext = await buildAdvisorHoldingsContext(userMessages);
-    mentionedStocksContext = await buildMentionedStocksContext(userMessages);
+    holdingsContext = await buildAdvisorHoldingsContext(userMessages, { authorized: holdingsAuthorized });
+    mentionedStocksContext = await buildMentionedStocksContext(userMessages, authorizedHoldings);
     failureLog.contextSummary = {
       appDataContextUsed: appDataContext.used,
       appDataContextBrief: appDataContext.brief,
@@ -1444,6 +1456,11 @@ const handleApi = createApiRouter({
   redactLogText,
   readHoldingsStore,
   writeHoldingsStore,
+  adminLogin,
+  changeAdminPassword,
+  extractAdminToken,
+  publicAdminStatus,
+  verifyAdminToken,
   analyzeHoldings,
   parseHoldingsImageWithKimi,
   enrichParsedHoldings,
