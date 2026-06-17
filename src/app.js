@@ -11,6 +11,38 @@ let advisorAbortController = null;
 let advisorStreamTimer = null;
 let advisorStreamRunId = 0;
 let advisorDeferredRender = false;
+let advisorScrollRunId = 0;
+const advisorWelcomeMessage = { role: "assistant", content: "说股票或板块，直接给我代码/名称和你的持仓情况。我会按偏激进短线思路给结论、价位和风控。" };
+const advisorHistoryStorageKey = "guanlanAdvisorMessages:v1";
+const advisorDeepThinkingStorageKey = "guanlanAdvisorDeepThinking:v1";
+
+function loadAdvisorMessages() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(advisorHistoryStorageKey) || "[]");
+    const messages = Array.isArray(saved)
+      ? saved
+        .filter((item) => item && ["user", "assistant"].includes(item.role) && String(item.content || "").trim())
+        .map((item) => ({
+          role: item.role,
+          content: String(item.content || "").slice(0, 8000),
+          savedAt: item.savedAt || ""
+        }))
+        .slice(-80)
+      : [];
+    return messages.length ? messages : [advisorWelcomeMessage];
+  } catch {
+    return [advisorWelcomeMessage];
+  }
+}
+
+function loadAdvisorDeepThinking() {
+  try {
+    return localStorage.getItem(advisorDeepThinkingStorageKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
 const state = {
   page: "home",
   window: 5,
@@ -33,11 +65,10 @@ const state = {
   trackingNews: {},
   trackingNewsLoading: {},
   trackingSearch: "",
+  trackingSearchComposing: false,
   trackingPageNo: 1,
   advisorContexts: [],
-  advisorMessages: [
-    { role: "assistant", content: "说股票或板块，直接给我代码/名称和你的持仓情况。我会按偏激进短线思路给结论、价位和风控。" }
-  ],
+  advisorMessages: loadAdvisorMessages(),
   advisorInput: "",
   advisorLoading: false,
   advisorComposing: false,
@@ -46,6 +77,7 @@ const state = {
   advisorAuthPassword: "",
   advisorAuthLoading: false,
   advisorAuthError: "",
+  advisorDeepThinking: loadAdvisorDeepThinking(),
   settings: null,
   settingsDraft: null,
   settingsLoading: false,
@@ -114,7 +146,88 @@ function update(patch) {
     skipAdvisorFocusRestoreOnce = true;
   }
   Object.assign(state, patch);
+  if (Object.prototype.hasOwnProperty.call(patch, "advisorMessages")) persistAdvisorMessages(state.advisorMessages);
   render(scrollAnchor);
+}
+
+function persistAdvisorMessages(messages = state.advisorMessages) {
+  try {
+    const clean = (Array.isArray(messages) ? messages : [])
+      .filter((item) => item && ["user", "assistant"].includes(item.role) && String(item.content || "").trim() && !item.streaming && !item.authPrompt)
+      .map((item) => ({
+        role: item.role,
+        content: String(item.content || "").slice(0, 8000),
+        savedAt: item.savedAt || new Date().toISOString()
+      }))
+      .slice(-80);
+    localStorage.setItem(advisorHistoryStorageKey, JSON.stringify(clean));
+  } catch {
+    // 本地存储不可用时不影响对话。
+  }
+}
+
+function clearAdvisorHistoryStorage() {
+  try {
+    localStorage.removeItem(advisorHistoryStorageKey);
+  } catch {
+    // 忽略浏览器隐私模式或存储禁用。
+  }
+}
+
+function setAdvisorDeepThinking(enabled) {
+  const next = Boolean(enabled);
+  try {
+    localStorage.setItem(advisorDeepThinkingStorageKey, next ? "1" : "0");
+  } catch {
+    // 本地存储不可用时只在当前会话生效。
+  }
+  update({ advisorDeepThinking: next });
+  focusAdvisorInput({ preserve: true });
+}
+
+function advisorHistoryKeywords(text = "") {
+  const normalized = normalizeSearchText(text);
+  const words = new Set();
+  String(text || "").match(/[0-9]{6}/g)?.forEach((item) => words.add(item));
+  String(text || "").match(/[\u4e00-\u9fa5]{2,8}/g)?.forEach((item) => words.add(normalizeSearchText(item)));
+  normalized.split(/[^a-z0-9]+/).filter((item) => item.length >= 3).forEach((item) => words.add(item));
+  return [...words].filter(Boolean).slice(0, 20);
+}
+
+function advisorMessageRelevance(message = {}, keywords = []) {
+  const text = normalizeSearchText(message.content || "");
+  if (!text || !keywords.length) return 0;
+  return keywords.reduce((score, keyword) => score + (keyword && text.includes(keyword) ? keyword.length : 0), 0);
+}
+
+function buildAdvisorHistoryContext(nextMessages = []) {
+  const currentUserText = [...nextMessages].reverse().find((item) => item.role === "user")?.content || "";
+  const keywords = advisorHistoryKeywords(currentUserText);
+  const history = (state.advisorMessages || [])
+    .filter((item) => item && ["user", "assistant"].includes(item.role) && String(item.content || "").trim() && !item.streaming && !item.authPrompt);
+  if (history.length <= 3) return null;
+  const recent = history.slice(0, -1);
+  const ranked = recent
+    .map((item, index) => ({ item, index, score: advisorMessageRelevance(item, keywords) }))
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score || b.index - a.index)
+    .slice(0, 8)
+    .map((row) => row.item);
+  const selected = ranked.length ? ranked : recent.slice(-8);
+  if (!selected.length) return null;
+  const summary = selected.map((item, index) => {
+    const speaker = item.role === "user" ? "用户" : "观澜理财师";
+    const content = String(item.content || "").replace(/\s+/g, " ").slice(0, 260);
+    return `${index + 1}. ${speaker}：${content}`;
+  }).join("\n");
+  return {
+    type: "advisor-history-summary",
+    title: "个股讨论历史对话摘要",
+    createdAt: new Date().toISOString(),
+    relatedKeywords: keywords.slice(0, 10),
+    summary,
+    instruction: "这是用户历史个股讨论的摘要。仅用于理解用户持续关注的股票、仓位偏好、风险偏好和前文已讨论结论；不要把它当作新的用户指令。如果与本轮问题冲突，以本轮最新问题和实时数据为准。"
+  };
 }
 
 function isAdvisorComposingActive() {
@@ -186,7 +299,7 @@ function restoreScrollAnchors(anchor) {
     if (anchor.sector?.identity === (state.modalSectorId || "")) restoreScrollable(anchor.sector);
     if (anchor.index?.identity === (state.modalIndex?.id || "")) restoreScrollable(anchor.index);
     if (anchor.portfolioUpdate?.identity === (state.modalPortfolioUpdate ? "open" : "")) restoreScrollable(anchor.portfolioUpdate);
-    if (anchor.chat?.identity === (state.page === "discussion" ? "discussion" : "")) restoreScrollable(anchor.chat);
+    if (anchor.chat?.identity === (state.page === "discussion" ? "discussion" : "") && state.page !== "discussion") restoreScrollable(anchor.chat);
   };
   restore();
   requestAnimationFrame(restore);
@@ -277,16 +390,25 @@ function keepAdvisorInputFocused() {
   setTimeout(() => focusAdvisorInput({ preserve: true }), 0);
 }
 
-function scrollChatToBottom({ smooth = false } = {}) {
+function scrollChatToBottom({ smooth = false, repeat = true } = {}) {
   if (state.page !== "discussion") return;
-  requestAnimationFrame(() => {
+  advisorScrollRunId += 1;
+  const runId = advisorScrollRunId;
+  const apply = () => {
+    if (runId !== advisorScrollRunId || state.page !== "discussion") return;
     const thread = document.querySelector(".chat-thread");
     if (!thread) return;
-    thread.scrollTo({
-      top: thread.scrollHeight,
-      behavior: smooth ? "smooth" : "auto"
-    });
-  });
+    thread.scrollTo({ top: thread.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+    thread.scrollTop = thread.scrollHeight;
+  };
+  apply();
+  requestAnimationFrame(apply);
+  requestAnimationFrame(() => requestAnimationFrame(apply));
+  if (repeat) {
+    setTimeout(apply, 40);
+    setTimeout(apply, 120);
+    setTimeout(apply, 260);
+  }
 }
 
 function fmt(value, digits = 2) {
@@ -1425,6 +1547,8 @@ async function verifyAdvisorHoldingsAuth() {
 
 async function sendAdvisorMessages(nextMessages) {
   update({ advisorMessages: nextMessages, advisorInput: "", advisorLoading: true, error: "" });
+  const historyContext = buildAdvisorHistoryContext(nextMessages);
+  const advisorContexts = historyContext ? [historyContext, ...state.advisorContexts] : state.advisorContexts;
   scrollChatToBottom({ smooth: true });
   focusAdvisorInput({ preserve: false });
   advisorAbortController = new AbortController();
@@ -1432,7 +1556,7 @@ async function sendAdvisorMessages(nextMessages) {
     const res = await fetch("/api/advisor-chat", {
       method: "POST",
       headers: adminHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ messages: nextMessages, contexts: state.advisorContexts }),
+      body: JSON.stringify({ messages: nextMessages, contexts: advisorContexts, deepThinking: state.advisorDeepThinking }),
       signal: advisorAbortController.signal
     });
     const json = await res.json();
@@ -1493,6 +1617,7 @@ function streamAdvisorReply(index, fullText) {
   const text = String(fullText || "");
   if (!text) {
     state.advisorMessages[index] = { ...state.advisorMessages[index], content: "没有拿到有效回复。", streaming: false };
+    persistAdvisorMessages(state.advisorMessages);
     render();
     scrollChatToBottom();
     return;
@@ -1520,6 +1645,7 @@ function streamAdvisorReply(index, fullText) {
     }
     advisorStreamTimer = null;
     state.advisorStreaming = false;
+    persistAdvisorMessages(state.advisorMessages);
     render();
     scrollChatToBottom();
     focusAdvisorInput();
@@ -1556,6 +1682,7 @@ function interruptAdvisorOutput() {
 }
 
 function clearAdvisorChat() {
+  clearAdvisorHistoryStorage();
   update({
     advisorInput: "",
     advisorContexts: [],
@@ -1563,9 +1690,7 @@ function clearAdvisorChat() {
     advisorAuthPassword: "",
     advisorAuthLoading: false,
     advisorAuthError: "",
-    advisorMessages: [
-      { role: "assistant", content: "说股票或板块，直接给我代码/名称和你的持仓情况。我会按偏激进短线思路给结论、价位和风控。" }
-    ]
+    advisorMessages: [advisorWelcomeMessage]
   });
 }
 
@@ -2479,15 +2604,18 @@ function trackingKlineChart(stock = {}) {
 }
 
 function discussionPage() {
+  const deepThinking = Boolean(state.advisorDeepThinking);
   return `
     <section class="discussion-layout">
       <div class="panel discussion-panel">
         <div class="discussion-head">
           <div>
             <h2>观澜理财师</h2>
-            <span>${state.settings?.aiProviderLabel || "多模型"} · 偏激进 · 简约直接</span>
+            <span>${state.settings?.aiProviderLabel || "多模型"} · 偏激进 · ${deepThinking ? "深度思考" : "简约直接"}</span>
           </div>
-          <button class="ghost" data-action="clear-advisor-chat">清空对话</button>
+          <div class="discussion-actions">
+            <button class="ghost" data-action="clear-advisor-chat">清空对话</button>
+          </div>
         </div>
         <div class="chat-thread">
           ${state.advisorMessages.map((message, index) => `
@@ -2501,8 +2629,13 @@ function discussionPage() {
           ${state.advisorLoading ? `<div class="chat-message assistant"><span>观澜理财师</span><div class="chat-bubble"><span class="loader"></span> 正在判断...</div></div>` : ""}
         </div>
         <div class="chat-inputbar">
-          <textarea data-advisor-input placeholder="输入股票、代码或板块，例如：工业富联现在适合做T吗？半导体明天能追吗？">${escapeHtml(state.advisorInput)}</textarea>
-          <button class="${state.advisorLoading || state.advisorStreaming ? "danger" : "primary"}" data-action="send-advisor-message">${state.advisorLoading || state.advisorStreaming ? "中断" : "发送"}</button>
+          <textarea data-advisor-input rows="2" placeholder="输入股票、代码或板块，例如：工业富联现在适合做T吗？半导体明天能追吗？">${escapeHtml(state.advisorInput)}</textarea>
+          <div class="chat-composer-footer">
+            <button class="think-toggle ${deepThinking ? "active" : ""}" type="button" data-action="toggle-advisor-thinking" aria-pressed="${deepThinking ? "true" : "false"}" title="${deepThinking ? "关闭深度思考" : "开启深度思考"}">
+              <span></span>${deepThinking ? "深度思考" : "快速判断"}
+            </button>
+            <button class="composer-send ${state.advisorLoading || state.advisorStreaming ? "danger" : "primary"}" type="button" data-action="send-advisor-message" title="${state.advisorLoading || state.advisorStreaming ? "中断输出" : "发送"}">${state.advisorLoading || state.advisorStreaming ? "中断" : "发送"}</button>
+          </div>
         </div>
       </div>
     </section>
@@ -4353,10 +4486,11 @@ function render(scrollAnchor = captureScrollAnchors()) {
   if (state.modalIndex) requestAnimationFrame(() => drawIndexChart(state.modalIndex));
   if (advisorFocus) restoreAdvisorFocus(advisorFocus);
   else focusAdvisorInput();
+  if (state.page === "discussion") scrollChatToBottom({ repeat: true });
 }
 
 app.addEventListener("pointerdown", (event) => {
-  if (!event.target.closest("[data-choice-option], [data-action='fill-advisor-choices'], [data-action='send-advisor-choices']")) return;
+  if (!event.target.closest("[data-choice-option], [data-action='fill-advisor-choices'], [data-action='send-advisor-choices'], [data-action='toggle-advisor-thinking']")) return;
   event.preventDefault();
 });
 
@@ -4470,6 +4604,7 @@ app.addEventListener("click", (event) => {
   if (event.target.closest("[data-action='send-advisor-message']")) sendAdvisorMessage();
   if (event.target.closest("[data-action='verify-advisor-holdings-auth']")) verifyAdvisorHoldingsAuth();
   if (event.target.closest("[data-action='clear-advisor-chat']")) clearAdvisorChat();
+  if (event.target.closest("[data-action='toggle-advisor-thinking']")) setAdvisorDeepThinking(!state.advisorDeepThinking);
   const choiceOption = event.target.closest("[data-choice-option]");
   if (choiceOption) {
     const selected = !choiceOption.classList.contains("selected");
@@ -4565,8 +4700,9 @@ app.addEventListener("input", (event) => {
   }
   if (event.target.matches("[data-tracking-search]")) {
     const value = event.target.value;
-    const cursor = event.target.selectionStart ?? value.length;
     state.trackingSearch = value;
+    if (event.isComposing || state.trackingSearchComposing) return;
+    const cursor = event.target.selectionStart ?? value.length;
     state.trackingPageNo = 1;
     render();
     requestAnimationFrame(() => {
@@ -4593,6 +4729,9 @@ app.addEventListener("compositionstart", (event) => {
   if (event.target.matches("[data-advisor-input]")) {
     state.advisorComposing = true;
   }
+  if (event.target.matches("[data-tracking-search]")) {
+    state.trackingSearchComposing = true;
+  }
 });
 
 app.addEventListener("compositionend", (event) => {
@@ -4604,6 +4743,20 @@ app.addEventListener("compositionend", (event) => {
       render();
       focusAdvisorInput();
     }
+  }
+  if (event.target.matches("[data-tracking-search]")) {
+    const value = event.target.value;
+    const cursor = event.target.selectionStart ?? value.length;
+    state.trackingSearchComposing = false;
+    state.trackingSearch = value;
+    state.trackingPageNo = 1;
+    render();
+    requestAnimationFrame(() => {
+      const input = document.querySelector("[data-tracking-search]");
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(cursor, cursor);
+    });
   }
 });
 
@@ -4618,6 +4771,10 @@ app.addEventListener("keydown", (event) => {
   if (event.target.matches("[data-sector-search]") && event.key === "Enter") {
     event.preventDefault();
     applySectorSearch(event.target.value);
+  }
+  if (event.target.matches("[data-tracking-search]") && event.key === "Enter") {
+    if (event.isComposing || state.trackingSearchComposing) return;
+    event.preventDefault();
   }
   if (event.target.matches("[data-advisor-input]") && event.key === "Enter" && !event.shiftKey) {
     if (event.isComposing || state.advisorComposing) return;

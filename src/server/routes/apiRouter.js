@@ -150,7 +150,8 @@ function createApiRouter(deps) {
           };
         }
         const data = await advisorChat(body.messages || [], body.contexts || body.context || [], {
-          holdingsAuthorized: holdingsAuth.authenticated || !holdingsAuth.hasHoldings
+          holdingsAuthorized: holdingsAuth.authenticated || !holdingsAuth.hasHoldings,
+          deepThinking: Boolean(body.deepThinking)
         });
         return { data };
       } catch (error) {
