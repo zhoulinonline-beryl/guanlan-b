@@ -198,6 +198,7 @@ sync_app_files() {
     --exclude ".env" \
     --exclude ".env.local" \
     --exclude "node_modules" \
+    --exclude "data" \
     --exclude ".DS_Store" \
     "${SOURCE_DIR}/" "${APP_DIR}/"
 }
@@ -205,6 +206,39 @@ sync_app_files() {
 write_env_and_settings() {
   local ai_provider provider_label api_key api_url text_model vision_model advisor_model market_source use_cache_bool use_cache_text admin_password
   local kimi_api_key kimi_api_url kimi_model kimi_vision_model
+  local force_reconfigure="${FORCE_RECONFIGURE:-0}"
+
+  mkdir -p "${APP_DIR}/data"
+  if [[ ! -f "${APP_DIR}/data/holdings.json" ]]; then
+    printf '{\n  "holdings": [],\n  "updatedAt": ""\n}\n' > "${APP_DIR}/data/holdings.json"
+  fi
+  if [[ ! -f "${APP_DIR}/data/cache.json" ]]; then
+    printf '{\n  "items": []\n}\n' > "${APP_DIR}/data/cache.json"
+  fi
+
+  if [[ -f "${APP_DIR}/data/settings.json" && "$force_reconfigure" != "1" ]]; then
+    log "检测到已有持久化设置：${APP_DIR}/data/settings.json，重新安装默认保留。"
+    warn "如需重新写入模型、AK、缓存策略和管理员密码，请执行：FORCE_RECONFIGURE=1 ./install-macos.sh"
+    if [[ ! -f "${APP_DIR}/.env.local" ]]; then
+      log "未检测到 .env.local，写入最小运行环境：${APP_DIR}/.env.local"
+      cat > "${APP_DIR}/.env.local" <<EOF
+PORT=${PORT}
+NODE_ENV=production
+EOF
+      chmod 600 "${APP_DIR}/.env.local"
+    else
+      log "保留已有环境变量：${APP_DIR}/.env.local"
+    fi
+    if [[ -f "${APP_DIR}/data/admin.json" ]]; then
+      log "保留已有管理员密码哈希：${APP_DIR}/data/admin.json"
+    else
+      admin_password="$(ask_admin_password)"
+      write_admin_password_file "$admin_password"
+    fi
+    log "持久化数据已保留：settings、admin、holdings、cache、tracking、market-snapshot 等 data/ 内容不会被覆盖。"
+    return
+  fi
+
   admin_password="$(ask_admin_password)"
   ai_provider="$(choose_ai_provider)"
   case "$ai_provider" in
@@ -311,14 +345,11 @@ NODE_ENV=production
 EOF
   chmod 600 "${APP_DIR}/.env.local"
 
-  mkdir -p "${APP_DIR}/data"
-  if [[ ! -f "${APP_DIR}/data/holdings.json" ]]; then
-    printf '{\n  "holdings": [],\n  "updatedAt": ""\n}\n' > "${APP_DIR}/data/holdings.json"
+  if [[ -f "${APP_DIR}/data/admin.json" && "$force_reconfigure" != "1" ]]; then
+    log "保留已有管理员密码哈希：${APP_DIR}/data/admin.json"
+  else
+    write_admin_password_file "$admin_password"
   fi
-  if [[ ! -f "${APP_DIR}/data/cache.json" ]]; then
-    printf '{\n  "items": []\n}\n' > "${APP_DIR}/data/cache.json"
-  fi
-  write_admin_password_file "$admin_password"
 
   log "写入 ${APP_DIR}/data/settings.json"
   cat > "${APP_DIR}/data/settings.json" <<EOF

@@ -35,6 +35,7 @@ const SETTINGS_FILE = process.env.GUANLAN_SETTINGS_FILE || path.join(DATA_DIR, "
 const ADMIN_FILE = process.env.GUANLAN_ADMIN_FILE || path.join(DATA_DIR, "admin.json");
 const CACHE_FILE = process.env.GUANLAN_CACHE_FILE || path.join(DATA_DIR, "cache.json");
 const MARKET_SNAPSHOT_FILE = process.env.GUANLAN_MARKET_SNAPSHOT_FILE || path.join(DATA_DIR, "market-snapshot.json");
+const TRACKING_FILE = process.env.GUANLAN_TRACKING_FILE || path.join(DATA_DIR, "tracking.json");
 
 const AI_PROVIDERS = {
   "kimi-cn": {
@@ -146,6 +147,7 @@ module.exports = {
   ADMIN_FILE,
   CACHE_FILE,
   MARKET_SNAPSHOT_FILE,
+  TRACKING_FILE,
   AI_PROVIDERS,
   DEFAULT_SETTINGS,
   CN_MARKET_CLOSED_DATES_2026,

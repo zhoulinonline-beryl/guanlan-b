@@ -45,11 +45,13 @@ describe("number utilities", () => {
 
   it("formats money and fixed text defensively", () => {
     assert.equal(numbers.moneyText("bad"), "--");
-    assert.equal(numbers.moneyText(9999), "9999");
+    assert.equal(numbers.formatNumber(1234567.891, 2), "1,234,567.89");
+    assert.equal(numbers.moneyText(9999), "9,999");
     assert.equal(numbers.moneyText(12345), "1.2万");
     assert.equal(numbers.moneyText(234567890), "2.35亿");
     assert.equal(numbers.moneyText(-20000), "-2.0万");
     assert.equal(numbers.toFixedText(1.2345, 3), "1.234");
+    assert.equal(numbers.toFixedText(12345.678, 2), "12,345.68");
     assert.equal(numbers.toFixedText("bad"), "--");
   });
 });

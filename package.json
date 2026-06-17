@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "test": "node --test tests/*.test.mjs",
-    "test:coverage": "node --test --experimental-test-coverage --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 tests/*.test.mjs",
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "test:coverage": "node --test --test-concurrency=1 --experimental-test-coverage --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 tests/*.test.mjs",
     "test:advisor-auth": "node scripts/advisor-auth-regression.js"
   }
 }

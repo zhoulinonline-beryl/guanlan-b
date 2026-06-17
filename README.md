@@ -234,7 +234,13 @@ sudo bash deploy-aliyun-ecs.sh
 - 行情数据源：`auto` / `tencent` / `eastmoney` / `sina`
 - 是否启用缓存
 
-部署脚本会把管理员密码哈希写入 `data/admin.json`。如果 ECS 部署时没有输入管理员密码，会提示并使用默认密码 `123321`。后续在设置页修改管理员密码后，重新执行 ECS 部署脚本会保留服务器上的 `data/` 目录，避免覆盖已持久化的新密码、持仓、缓存和设置。
+首次部署时脚本会把管理员密码哈希写入 `data/admin.json`。如果 ECS 部署时没有输入管理员密码，会提示并使用默认密码 `123321`。后续在设置页修改管理员密码后，重新执行 ECS 部署脚本会保留服务器上的 `data/` 目录，并默认保留已有 `data/settings.json`、`data/admin.json` 和 `.env.local`，避免覆盖已持久化的新密码、持仓、追踪池、缓存和设置。
+
+如确实需要重新写入模型、AK、缓存策略和管理员密码，可显式执行：
+
+```bash
+sudo env FORCE_RECONFIGURE=1 bash deploy-aliyun-ecs.sh
+```
 
 4. 访问服务。
 
@@ -330,7 +336,19 @@ ADVISOR_MODEL=kimi-k2.6
 NODE_ENV=production
 ```
 
-说明：`install-macos.sh` 和 `deploy-aliyun-ecs.sh` 会强制设置管理员密码，并写入 `data/admin.json` 的哈希值；也会先通过编号选择模型供应商，再明文输入对应 AK，便于确认供应商和密钥没有填错。脚本会把 AK 写入 `.env.local` 和 `data/settings.json`，并设置为仅当前用户可读写。ECS 脚本同步应用文件时会排除服务器端 `data/` 目录，保护设置页里已经修改过的管理员密码和持久化数据。
+说明：`install-macos.sh` 和 `deploy-aliyun-ecs.sh` 首次安装会设置管理员密码，并写入 `data/admin.json` 的哈希值；也会先通过编号选择模型供应商，再明文输入对应 AK，便于确认供应商和密钥没有填错。脚本会把 AK 写入 `.env.local` 和 `data/settings.json`，并设置为仅当前用户可读写。重新安装/部署时，脚本会排除并保留已存在的 `data/` 目录，且默认不覆盖已有 `data/settings.json`、`data/admin.json` 和 `.env.local`。如需重新初始化这些配置，请使用 `FORCE_RECONFIGURE=1`。
+
+macOS 强制重新配置示例：
+
+```bash
+FORCE_RECONFIGURE=1 ./install-macos.sh
+```
+
+ECS 强制重新配置示例：
+
+```bash
+sudo env FORCE_RECONFIGURE=1 bash deploy-aliyun-ecs.sh
+```
 
 ## 缓存策略
 
