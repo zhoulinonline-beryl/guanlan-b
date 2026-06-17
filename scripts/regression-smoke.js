@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 const baseUrl = process.env.BASE_URL || "http://127.0.0.1:5173";
+const adminPassword = process.env.ADMIN_PASSWORD || "123321";
+let adminToken = "";
 
 async function requestJson(pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
@@ -75,8 +77,20 @@ async function main() {
     return { status: json.status, count: json.data?.length || 0, error: json.error || "" };
   });
 
+  await record("admin-login", async () => {
+    const json = await requestJson("/api/admin/login", {
+      method: "POST",
+      body: JSON.stringify({ password: adminPassword })
+    });
+    assert(json.data?.token, "admin token missing");
+    adminToken = json.data.token;
+    return { token: "<ok>", expiresInMs: json.data.expiresInMs };
+  });
+
   await record("holdings", async () => {
-    const json = await requestJson("/api/holdings");
+    const json = await requestJson("/api/holdings", {
+      headers: { "X-Admin-Token": adminToken }
+    });
     assert(json.data && Array.isArray(json.data.rows), "holdings rows missing");
     return { rows: json.data.rows.length, parser: json.data.parser };
   });
@@ -103,6 +117,7 @@ async function main() {
     await record("advisor-chat", async () => {
       const json = await requestJson("/api/advisor-chat", {
         method: "POST",
+        headers: { "X-Admin-Token": adminToken },
         body: JSON.stringify({
           messages: [
             { role: "user", content: "请用一句话说明你是否已经能结合我的持仓成本和当前价回答。" }

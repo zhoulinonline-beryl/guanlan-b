@@ -2311,6 +2311,65 @@ button {
   height: 16px;
 }
 
+.portfolio-lock {
+  min-height: min(560px, calc(100vh - 180px));
+  display: grid;
+  place-items: center;
+}
+
+.portfolio-lock-card {
+  width: min(520px, 100%);
+  display: grid;
+  gap: 16px;
+  border: 1px solid rgba(84, 163, 255, 0.22);
+  border-radius: 8px;
+  background: #09131c;
+  padding: 22px;
+}
+
+.portfolio-lock-mark {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(84, 163, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(84, 163, 255, 0.1);
+  color: #9dccff;
+}
+
+.portfolio-lock-mark svg {
+  width: 22px;
+  height: 22px;
+}
+
+.portfolio-lock-card span,
+.portfolio-lock-card small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.portfolio-lock-card h2 {
+  margin: 4px 0 0;
+  font-size: 22px;
+}
+
+.portfolio-lock-card p {
+  margin: 8px 0 0;
+  color: #c6d5df;
+  line-height: 1.6;
+}
+
+.portfolio-lock-card label {
+  display: grid;
+  gap: 7px;
+}
+
+.portfolio-lock-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .portfolio-update-body {
   overflow: auto;
   padding: 16px;
@@ -2715,7 +2774,7 @@ button {
 
 .settings-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
   gap: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -2745,6 +2804,16 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.setting-note {
+  border: 1px solid rgba(84, 163, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(84, 163, 255, 0.06);
+  color: #b9cbd8;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .settings-content-grid {
@@ -3300,6 +3369,48 @@ button {
   color: var(--ink);
   padding: 10px;
   line-height: 1.5;
+}
+
+.advisor-auth-panel {
+  margin-top: 10px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(71, 137, 255, 0.28);
+  border-radius: 8px;
+  background: rgba(12, 29, 47, 0.92);
+}
+
+.advisor-auth-panel strong {
+  display: block;
+  color: #e7f1ff;
+  font-size: 14px;
+  margin-bottom: 3px;
+}
+
+.advisor-auth-panel span,
+.advisor-auth-panel small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.advisor-auth-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.advisor-auth-form input {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #071018;
+  color: var(--ink);
+  padding: 9px 10px;
+}
+
+.advisor-auth-error {
+  color: var(--down) !important;
 }
 
 .news-list {

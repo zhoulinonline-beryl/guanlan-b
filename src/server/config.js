@@ -29,11 +29,12 @@ const HOST = "127.0.0.1";
 const RECOMMEND_REFRESH_MS = 15 * 60 * 1000;
 const EASTMONEY_UT = "b2884a393a59ad64002292a3e90d46a5";
 
-const DATA_DIR = path.join(root, "data");
-const HOLDINGS_FILE = path.join(DATA_DIR, "holdings.json");
-const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
-const CACHE_FILE = path.join(DATA_DIR, "cache.json");
-const MARKET_SNAPSHOT_FILE = path.join(DATA_DIR, "market-snapshot.json");
+const DATA_DIR = process.env.GUANLAN_DATA_DIR ? path.resolve(process.env.GUANLAN_DATA_DIR) : path.join(root, "data");
+const HOLDINGS_FILE = process.env.GUANLAN_HOLDINGS_FILE || path.join(DATA_DIR, "holdings.json");
+const SETTINGS_FILE = process.env.GUANLAN_SETTINGS_FILE || path.join(DATA_DIR, "settings.json");
+const ADMIN_FILE = process.env.GUANLAN_ADMIN_FILE || path.join(DATA_DIR, "admin.json");
+const CACHE_FILE = process.env.GUANLAN_CACHE_FILE || path.join(DATA_DIR, "cache.json");
+const MARKET_SNAPSHOT_FILE = process.env.GUANLAN_MARKET_SNAPSHOT_FILE || path.join(DATA_DIR, "market-snapshot.json");
 
 const AI_PROVIDERS = {
   "kimi-cn": {
@@ -142,6 +143,7 @@ module.exports = {
   DATA_DIR,
   HOLDINGS_FILE,
   SETTINGS_FILE,
+  ADMIN_FILE,
   CACHE_FILE,
   MARKET_SNAPSHOT_FILE,
   AI_PROVIDERS,

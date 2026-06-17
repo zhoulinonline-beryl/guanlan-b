@@ -14,6 +14,7 @@ set -Eeuo pipefail
 #   DOMAIN=radar.example.com
 #   AI_PROVIDER=kimi-cn|kimi-intl|deepseek|minimax|glm
 #   AI_API_KEY=sk-xxx
+#   ADMIN_PASSWORD=123321
 
 APP_NAME="${APP_NAME:-guanlan-stock-radar}"
 APP_DIR="${APP_DIR:-/opt/${APP_NAME}}"
@@ -75,6 +76,53 @@ ask_yes_no() {
     y|Y|yes|YES|Yes) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+ask_admin_password() {
+  local password confirm
+  if [[ -n "${ADMIN_PASSWORD:-}" ]]; then
+    [[ "${#ADMIN_PASSWORD}" -ge 6 ]] || fail "ADMIN_PASSWORD 至少需要 6 位"
+    printf '%s' "$ADMIN_PASSWORD"
+    return
+  fi
+  while true; do
+    password="$(ask_secret "请设置管理员密码（保护我的持股历史数据，至少 6 位；明文显示）")"
+    [[ -n "$password" ]] || fail "必须设置管理员密码，否则不能部署"
+    [[ "${#password}" -ge 6 ]] || { warn "管理员密码至少需要 6 位"; continue; }
+    confirm="$(ask_secret "请再次输入管理员密码")"
+    [[ "$password" == "$confirm" ]] || { warn "两次输入不一致，请重新设置"; continue; }
+    printf '%s' "$password"
+    return
+  done
+}
+
+write_admin_password_file() {
+  local admin_password="$1"
+  log "写入管理员密码哈希：${APP_DIR}/data/admin.json"
+  ADMIN_PASSWORD_VALUE="$admin_password" ADMIN_FILE_PATH="${APP_DIR}/data/admin.json" node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+const password = String(process.env.ADMIN_PASSWORD_VALUE || "").trim();
+if (password.length < 6) {
+  console.error("管理员密码至少需要 6 位");
+  process.exit(1);
+}
+const salt = crypto.randomBytes(16).toString("hex");
+const iterations = 120000;
+const digest = crypto.pbkdf2Sync(password, salt, iterations, 32, "sha256").toString("hex");
+const file = process.env.ADMIN_FILE_PATH;
+fs.mkdirSync(path.dirname(file), { recursive: true });
+fs.writeFileSync(file, `${JSON.stringify({
+  algorithm: "pbkdf2-sha256",
+  iterations,
+  salt,
+  digest,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString()
+}, null, 2)}\n`);
+NODE
+  chmod 600 "${APP_DIR}/data/admin.json"
 }
 
 choose_ai_provider() {
@@ -181,9 +229,10 @@ ensure_project_files() {
 }
 
 write_env_file() {
-  local ai_provider provider_label api_key api_url ocr_api_url text_model vision_model advisor_model market_source use_cache_bool
+  local ai_provider provider_label api_key api_url ocr_api_url text_model vision_model advisor_model market_source use_cache_bool use_cache_text admin_password
   local kimi_api_key kimi_api_url kimi_model kimi_vision_model
 
+  admin_password="$(ask_admin_password)"
   ai_provider="$(choose_ai_provider)"
   case "$ai_provider" in
     kimi|kimi-cn)
@@ -263,8 +312,10 @@ write_env_file() {
 
   if ask_yes_no "是否启用缓存策略（缓存历史行情、新闻政策和模型结果，降低等待和调用成本）" "Y"; then
     use_cache_bool="true"
+    use_cache_text="true"
   else
     use_cache_bool="false"
+    use_cache_text="false"
   fi
 
   if [[ "$ai_provider" == kimi-* ]]; then
@@ -304,6 +355,7 @@ EOF
   if [[ ! -f "${APP_DIR}/data/cache.json" ]]; then
     printf '{\n  "items": []\n}\n' > "${APP_DIR}/data/cache.json"
   fi
+  write_admin_password_file "$admin_password"
 
   log "写入应用设置：${APP_DIR}/data/settings.json"
   cat > "${APP_DIR}/data/settings.json" <<EOF
@@ -327,6 +379,8 @@ EOF
 EOF
   chmod 600 "${APP_DIR}/data/settings.json"
   chown -R "${SERVICE_USER}:${SERVICE_USER}" "${APP_DIR}/data" "${APP_DIR}/.env.local"
+  log "缓存策略：${use_cache_text}"
+  log "管理员密码已写入：${APP_DIR}/data/admin.json"
 }
 
 sync_app_files() {
@@ -337,6 +391,7 @@ sync_app_files() {
     --exclude ".env" \
     --exclude ".env.local" \
     --exclude "node_modules" \
+    --exclude "data" \
     --exclude ".DS_Store" \
     "${SOURCE_DIR}/" "${APP_DIR}/"
   chown -R "${SERVICE_USER}:${SERVICE_USER}" "$APP_DIR"
@@ -414,6 +469,7 @@ print_result() {
   log "部署完成"
   echo
   echo "应用目录：${APP_DIR}"
+  echo "管理员密码哈希：${APP_DIR}/data/admin.json"
   echo "本地服务：http://127.0.0.1:${PORT}"
   echo "公网入口：${public_target}"
   echo
