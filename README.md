@@ -166,7 +166,7 @@ node server.js
 
 ## 阿里云 ECS 部署
 
-项目内置 ECS 部署脚本，逻辑与 macOS 安装脚本保持一致，会引导你选择模型供应商、输入对应 AK、选择行情源和缓存策略，然后自动安装 Node.js、Nginx，创建 systemd 服务并配置反向代理。
+项目内置 ECS 部署脚本，逻辑与 macOS 安装脚本保持一致，会引导你设置管理员密码、选择模型供应商、输入对应 AK、选择行情源和缓存策略，然后自动安装 Node.js、Nginx，创建 systemd 服务并配置反向代理。
 
 ```bash
 sudo bash deploy-aliyun-ecs.sh
@@ -233,6 +233,8 @@ sudo bash deploy-aliyun-ecs.sh
 - API 地址、OCR 地址、文本模型、OCR 模型、理财师模型
 - 行情数据源：`auto` / `tencent` / `eastmoney` / `sina`
 - 是否启用缓存
+
+部署脚本会把管理员密码哈希写入 `data/admin.json`。后续在设置页修改管理员密码后，重新执行 ECS 部署脚本会保留服务器上的 `data/` 目录，避免覆盖已持久化的新密码、持仓、缓存和设置。
 
 4. 访问服务。
 
@@ -328,7 +330,7 @@ ADVISOR_MODEL=kimi-k2.6
 NODE_ENV=production
 ```
 
-说明：`install-macos.sh` 和 `deploy-aliyun-ecs.sh` 会强制设置管理员密码，并写入 `data/admin.json` 的哈希值；也会先通过编号选择模型供应商，再明文输入对应 AK，便于确认供应商和密钥没有填错。脚本会把 AK 写入 `.env.local` 和 `data/settings.json`，并设置为仅当前用户可读写。
+说明：`install-macos.sh` 和 `deploy-aliyun-ecs.sh` 会强制设置管理员密码，并写入 `data/admin.json` 的哈希值；也会先通过编号选择模型供应商，再明文输入对应 AK，便于确认供应商和密钥没有填错。脚本会把 AK 写入 `.env.local` 和 `data/settings.json`，并设置为仅当前用户可读写。ECS 脚本同步应用文件时会排除服务器端 `data/` 目录，保护设置页里已经修改过的管理员密码和持久化数据。
 
 ## 缓存策略
 

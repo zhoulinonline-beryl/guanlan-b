@@ -14,6 +14,7 @@ set -Eeuo pipefail
 #   DOMAIN=radar.example.com
 #   AI_PROVIDER=kimi-cn|kimi-intl|deepseek|minimax|glm
 #   AI_API_KEY=sk-xxx
+#   ADMIN_PASSWORD=123321
 
 APP_NAME="${APP_NAME:-guanlan-stock-radar}"
 APP_DIR="${APP_DIR:-/opt/${APP_NAME}}"
@@ -228,7 +229,7 @@ ensure_project_files() {
 }
 
 write_env_file() {
-  local ai_provider provider_label api_key api_url ocr_api_url text_model vision_model advisor_model market_source use_cache_bool admin_password
+  local ai_provider provider_label api_key api_url ocr_api_url text_model vision_model advisor_model market_source use_cache_bool use_cache_text admin_password
   local kimi_api_key kimi_api_url kimi_model kimi_vision_model
 
   admin_password="$(ask_admin_password)"
@@ -311,8 +312,10 @@ write_env_file() {
 
   if ask_yes_no "是否启用缓存策略（缓存历史行情、新闻政策和模型结果，降低等待和调用成本）" "Y"; then
     use_cache_bool="true"
+    use_cache_text="true"
   else
     use_cache_bool="false"
+    use_cache_text="false"
   fi
 
   if [[ "$ai_provider" == kimi-* ]]; then
@@ -376,6 +379,8 @@ EOF
 EOF
   chmod 600 "${APP_DIR}/data/settings.json"
   chown -R "${SERVICE_USER}:${SERVICE_USER}" "${APP_DIR}/data" "${APP_DIR}/.env.local"
+  log "缓存策略：${use_cache_text}"
+  log "管理员密码已写入：${APP_DIR}/data/admin.json"
 }
 
 sync_app_files() {
@@ -386,6 +391,7 @@ sync_app_files() {
     --exclude ".env" \
     --exclude ".env.local" \
     --exclude "node_modules" \
+    --exclude "data" \
     --exclude ".DS_Store" \
     "${SOURCE_DIR}/" "${APP_DIR}/"
   chown -R "${SERVICE_USER}:${SERVICE_USER}" "$APP_DIR"
@@ -463,6 +469,7 @@ print_result() {
   log "部署完成"
   echo
   echo "应用目录：${APP_DIR}"
+  echo "管理员密码哈希：${APP_DIR}/data/admin.json"
   echo "本地服务：http://127.0.0.1:${PORT}"
   echo "公网入口：${public_target}"
   echo
