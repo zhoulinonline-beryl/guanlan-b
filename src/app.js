@@ -4,6 +4,8 @@ import { holdingsUnauthorizedMessage, shouldRequestHoldingsAuth } from "./shared
 const app = document.querySelector("#app");
 let stockChartPointer = null;
 let stockChartDrawFrame = 0;
+let trackingChartDrawFrame = 0;
+const trackingChartPointers = new Map();
 let skipAdvisorFocusRestoreOnce = false;
 let advisorAbortController = null;
 let advisorStreamTimer = null;
@@ -25,6 +27,13 @@ const state = {
   stocksBySector: new Map(),
   recommendations: [],
   recommendMeta: null,
+  trackingRows: [],
+  trackingUpdatedAt: "",
+  trackingLoading: false,
+  trackingNews: {},
+  trackingNewsLoading: {},
+  trackingSearch: "",
+  trackingPageNo: 1,
   advisorContexts: [],
   advisorMessages: [
     { role: "assistant", content: "说股票或板块，直接给我代码/名称和你的持仓情况。我会按偏激进短线思路给结论、价位和风控。" }
@@ -283,7 +292,11 @@ function scrollChatToBottom({ smooth = false } = {}) {
 function fmt(value, digits = 2) {
   if (value === null || value === undefined || value === "") return "--";
   if (!Number.isFinite(Number(value))) return "--";
-  return Number(value).toFixed(digits);
+  const fixed = Number(value).toFixed(digits);
+  const [integer, decimal] = fixed.split(".");
+  const sign = integer.startsWith("-") ? "-" : "";
+  const grouped = integer.replace("-", "").replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${sign}${grouped}${decimal ? `.${decimal}` : ""}`;
 }
 
 function money(value) {
@@ -316,8 +329,28 @@ function sectorStocks(sectorId = state.selectedSectorId) {
   return state.stocksBySector.get(sectorId) || [];
 }
 
+function asStockFromTracking(row = {}) {
+  const samples = row.samples || [];
+  const latest = samples.at(-1) || {};
+  const first = samples[0] || {};
+  const price = latest.price ?? row.price;
+  const pct = Number.isFinite(Number(price)) && Number.isFinite(Number(first.price)) && first.price
+    ? ((Number(price) - Number(first.price)) / Number(first.price)) * 100
+    : row.pct;
+  return {
+    ...row,
+    code: row.code,
+    name: row.name || row.code,
+    market: row.market,
+    price,
+    pct,
+    volume: latest.volume ?? row.volume,
+    candles: row.klines || []
+  };
+}
+
 function findStock(code) {
-  const pools = [...state.stocksBySector.values(), state.recommendations];
+  const pools = [...state.stocksBySector.values(), state.recommendations, (state.trackingRows || []).map(asStockFromTracking)];
   return pools.flat().find((item) => item.code === code);
 }
 
@@ -734,8 +767,15 @@ function closeTopOverlay() {
   setTimeout(() => flushDeferredAutoRefresh(), 120);
 }
 
-async function api(path) {
-  const res = await fetch(path, { cache: "no-store" });
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    ...options,
+    cache: "no-store",
+    headers: {
+      ...(options.body && !options.headers?.["Content-Type"] ? { "Content-Type": "application/json" } : {}),
+      ...(options.headers || {})
+    }
+  });
   const json = await res.json();
   if (!json.ok) {
     const error = new Error(json.error || "行情接口异常");
@@ -1112,6 +1152,99 @@ async function loadRecommendations({ force = false } = {}) {
     });
   } catch (error) {
     update({ recLoading: false, error: error.message });
+  }
+}
+
+async function loadTracking({ force = false, silent = false } = {}) {
+  if (!silent) update({ trackingLoading: true, error: "" });
+  try {
+    const json = await api(force ? "/api/tracking/refresh" : "/api/tracking", { method: force ? "POST" : "GET" });
+    const store = json.data || {};
+    const stocks = store.stocks || [];
+    update({
+      trackingRows: stocks,
+      trackingUpdatedAt: store.updatedAt || json.updatedAt || state.trackingUpdatedAt,
+      trackingLoading: false,
+      updatedAt: json.updatedAt || state.updatedAt
+    });
+    loadTrackingNews(stocks);
+  } catch (error) {
+    update({ trackingLoading: false, error: error.message });
+  }
+}
+
+async function loadTrackingNews(stocks = state.trackingRows) {
+  const targets = (stocks || []).filter((stock) => stock?.code && !state.trackingNews[stock.code] && !state.trackingNewsLoading[stock.code]).slice(0, 8);
+  if (!targets.length) return;
+  state.trackingNewsLoading = {
+    ...state.trackingNewsLoading,
+    ...Object.fromEntries(targets.map((stock) => [stock.code, true]))
+  };
+  render();
+  const results = await Promise.allSettled(targets.map(async (stock) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+    try {
+      const json = await api(`/api/news?code=${encodeURIComponent(stock.code)}&name=${encodeURIComponent(stock.name || "")}`, { signal: controller.signal });
+      return [stock.code, (json.data || []).slice(0, 3)];
+    } finally {
+      clearTimeout(timer);
+    }
+  }));
+  const nextNews = { ...state.trackingNews };
+  const nextLoading = { ...state.trackingNewsLoading };
+  for (const result of results) {
+    if (result.status === "fulfilled") {
+      const [code, news] = result.value;
+      nextNews[code] = news;
+      nextLoading[code] = false;
+    }
+  }
+  for (const stock of targets) nextLoading[stock.code] = false;
+  update({ trackingNews: nextNews, trackingNewsLoading: nextLoading });
+}
+
+async function addModalStockToTracking() {
+  const stock = state.modalStock;
+  if (!stock?.code) return;
+  update({ trackingLoading: true, error: "" });
+  try {
+    const json = await api("/api/tracking", {
+      method: "POST",
+      body: JSON.stringify({
+        code: stock.code,
+        name: stock.name,
+        market: stock.market
+      })
+    });
+    const store = json.data || {};
+    update({
+      trackingRows: store.stocks || [],
+      trackingUpdatedAt: store.updatedAt || json.updatedAt || state.trackingUpdatedAt,
+      trackingLoading: false,
+      updatedAt: json.updatedAt || state.updatedAt
+    });
+    showToast(`已加入追踪：${stock.name || stock.code}`);
+  } catch (error) {
+    update({ trackingLoading: false, error: error.message });
+  }
+}
+
+async function removeTrackingStock(code) {
+  if (!code) return;
+  update({ trackingLoading: true, error: "" });
+  try {
+    const json = await api(`/api/tracking?code=${encodeURIComponent(code)}`, { method: "DELETE" });
+    const store = json.data || {};
+    update({
+      trackingRows: store.stocks || [],
+      trackingUpdatedAt: store.updatedAt || json.updatedAt || state.trackingUpdatedAt,
+      trackingLoading: false,
+      updatedAt: json.updatedAt || state.updatedAt
+    });
+    showToast("已取消追踪");
+  } catch (error) {
+    update({ trackingLoading: false, error: error.message });
   }
 }
 
@@ -1576,12 +1709,17 @@ function buildRecommendationReason(stock, advice) {
   return `${stock.sectorName} 方向靠前，${mainText}；个股进攻分 ${fmt(stock.score, 1)}，${advice.action}，${advice.plan}`;
 }
 
+function isTrackedStock(code = "") {
+  return Boolean(code && (state.trackingRows || []).some((item) => item.code === code));
+}
+
 function shell(content) {
   const sector = selectedSector();
   const titles = {
     home: ["全景雷达", "主要指数、板块行情、主力方向与雷达解释合并呈现"],
     recommend: ["股票推荐", "主力方向明显且适合当下建仓的跨板块候选"],
     portfolio: ["我的持股", "上传截图更新持股，持久化保存后结合板块、行情与新闻政策给出操作建议"],
+    tracking: ["股票追踪", "每 15 分钟采集已追踪股票的分钟价格与成交量"],
     discussion: ["个股讨论", "和观澜理财师讨论股票、板块与短线交易计划"],
     settings: ["设置", "模型、AK 与缓存策略"]
   };
@@ -1597,6 +1735,7 @@ function shell(content) {
           ${navButton("home", "全景雷达", icons.radar)}
           ${navButton("recommend", "股票推荐", icons.home)}
           ${navButton("portfolio", "我的持股", icons.list)}
+          ${navButton("tracking", "股票追踪", icons.radar)}
           ${navButton("discussion", "个股讨论", icons.chat)}
           ${navButton("settings", "设置", icons.settings)}
         </nav>
@@ -1891,7 +2030,7 @@ function indexAnalysis(index) {
   const summary = `${rows[0].day.slice(5)} 至 ${last.day.slice(5)} 累计${trendPct >= 0 ? "上涨" : "下跌"} ${fmt(Math.abs(trendPct))}%，${state === "短线偏强" ? "指数保持在两周均价上方，风险偏好回暖" : state === "短线转弱" ? "指数跌破两周均价，需观察承接力度" : "多空拉锯明显，等待方向选择"}`;
   const reasons = [
     `区间高低点为 ${fmt(high)} / ${fmt(low)}，振幅 ${fmt(amplitude)}%，可观察是否突破区间上沿。`,
-    `最近 ${rows.length} 个交易日上涨 ${upDays} 天，短线连续性${upDays >= rows.length / 2 ? "尚可" : "偏弱"}。`,
+    `最近 ${fmt(rows.length, 0)} 个交易日上涨 ${fmt(upDays, 0)} 天，短线连续性${upDays >= rows.length / 2 ? "尚可" : "偏弱"}。`,
     `日均成交额约 ${money(avgAmount)}，若后续放量站上均价，进攻信号会更清晰。`
   ];
   return { rows, days: rows.length, trendPct, amplitude, avgAmount, high, low, upDays, state, stateClass, summary, reasons };
@@ -1913,7 +2052,7 @@ function sectorCard(sector) {
         <span>主力占比 <b class="${pctClass(sector.mainNetPct)}">${fmt(sector.mainNetPct)}%</b></span>
         <span>流入速度 <b class="up">${fmt(sector.mainInSpeed)}%</b></span>
         <span>离场速度 <b class="down">${fmt(sector.mainOutSpeed)}%</b></span>
-        <span>涨跌家 ${sector.upCount || 0}/${sector.downCount || 0}</span>
+        <span>涨跌家 ${fmt(sector.upCount || 0, 0)}/${fmt(sector.downCount || 0, 0)}</span>
       </div>
       <div class="signal-row"><div class="scorebar"><span style="width:${sector.attackScore}%"></span></div><strong>${fmt(sector.attackScore, 1)}</strong></div>
       <ul class="sector-reasons">
@@ -2019,7 +2158,7 @@ function radarPage() {
               <div>
                 <div class="direction-rank">#${index + 1} · 雷达分 ${fmt(item.attackScore, 1)} · 主力 ${money(item.mainNet)}</div>
                 <div class="sector-name">${item.name}</div>
-                <div class="quote-grid compact"><span>成交 ${money(item.amount)}</span><span>涨跌家 ${item.upCount || 0}/${item.downCount || 0}</span></div>
+                <div class="quote-grid compact"><span>成交 ${money(item.amount)}</span><span>涨跌家 ${fmt(item.upCount || 0, 0)}/${fmt(item.downCount || 0, 0)}</span></div>
               </div>
               <div class="pct ${pctClass(item.pct)}">${item.pct > 0 ? "+" : ""}${fmt(item.pct)}%</div>
             </article>
@@ -2074,6 +2213,268 @@ function recommendPage() {
     </section>
     ${meta.error ? `<div class="panel empty down">${meta.error}</div>` : ""}
     ${content}
+  `;
+}
+
+const trackingPageSize = 6;
+
+function trackingPageInfo(rows = state.trackingRows || []) {
+  const keyword = normalizeSearchText(state.trackingSearch);
+  const filtered = keyword
+    ? rows.filter((stock) => normalizeSearchText(`${stock.name || ""} ${stock.code || ""}`).includes(keyword))
+    : rows;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / trackingPageSize));
+  const current = Math.min(Math.max(1, Number(state.trackingPageNo) || 1), pageCount);
+  const start = (current - 1) * trackingPageSize;
+  return {
+    keyword,
+    total: rows.length,
+    filtered,
+    pageCount,
+    current,
+    items: filtered.slice(start, start + trackingPageSize)
+  };
+}
+
+function trackingPage() {
+  const rows = state.trackingRows || [];
+  const pageInfo = trackingPageInfo(rows);
+  return `
+    <section class="portfolio-action-bar tracking-action-bar">
+      <div>
+        <strong>追踪池</strong>
+        <span>${state.trackingUpdatedAt ? `最近采样 ${new Date(state.trackingUpdatedAt).toLocaleString("zh-CN")}` : "每 15 分钟采集一次价格与成交量"} · ${fmt(pageInfo.filtered.length, 0)}/${fmt(pageInfo.total, 0)}只</span>
+      </div>
+      <div class="controls">
+        <input class="tracking-search-input" data-tracking-search value="${escapeHtml(state.trackingSearch || "")}" placeholder="搜索已追踪股票/代码" autocomplete="off" />
+        ${state.trackingSearch ? `<button class="ghost" data-action="clear-tracking-search">清空</button>` : ""}
+        <button class="ghost" data-action="refresh-tracking" ${state.trackingLoading ? "disabled" : ""}>${icons.refresh}${state.trackingLoading ? "刷新中" : "立即采样"}</button>
+      </div>
+    </section>
+    ${state.trackingLoading && !rows.length ? loadingView() : rows.length ? pageInfo.items.length ? `
+      <section class="tracking-grid">
+        ${pageInfo.items.map((stock) => trackingCard(stock)).join("")}
+      </section>
+      ${trackingPager(pageInfo)}
+    ` : `<section class="panel empty">没有匹配「${escapeHtml(state.trackingSearch)}」的追踪股票。</section>` : `<section class="panel empty">还没有追踪股票。打开股票详情，在“加入讨论”旁边点击“加入追踪”。</section>`}
+  `;
+}
+
+function trackingPager(pageInfo) {
+  if (pageInfo.pageCount <= 1) return "";
+  return `
+    <div class="pager tracking-pager">
+      <button class="ghost" data-tracking-page="prev" ${pageInfo.current <= 1 ? "disabled" : ""}>上一页</button>
+      <span>第 ${fmt(pageInfo.current, 0)} / ${fmt(pageInfo.pageCount, 0)} 页 · 每页 ${fmt(trackingPageSize, 0)} 只</span>
+      <button class="ghost" data-tracking-page="next" ${pageInfo.current >= pageInfo.pageCount ? "disabled" : ""}>下一页</button>
+    </div>
+  `;
+}
+
+function trackingCard(stock = {}) {
+  const samples = stock.samples || [];
+  const latest = samples.at(-1) || {};
+  const first = samples[0] || {};
+  const priceChange = Number.isFinite(Number(latest.price)) && Number.isFinite(Number(first.price)) && first.price
+    ? ((latest.price - first.price) / first.price) * 100
+    : null;
+  const advice = trackingBuildAdvice(stock, latest);
+  const news = state.trackingNews[stock.code] || stock.news || [];
+  const newsLoading = state.trackingNewsLoading[stock.code];
+  return `
+    <article class="tracking-card panel" data-stock="${escapeHtml(stock.code || "")}">
+      <div class="tracking-card-head">
+        <div>
+          <strong>${escapeHtml(stock.name || stock.code)}</strong>
+          <span>${stock.code} · 加入 ${stock.addedAt ? new Date(stock.addedAt).toLocaleString("zh-CN") : "--"}</span>
+        </div>
+        <button class="icon-btn tracking-remove-btn danger" data-action="remove-tracking" data-tracking-code="${escapeHtml(stock.code || "")}" title="取消追踪" aria-label="取消追踪">${icons.close}</button>
+      </div>
+      <div class="tracking-metrics">
+        <div><span>最新价</span><strong class="${pctClass(priceChange)}">${fmt(latest.price)}</strong></div>
+        <div><span>追踪涨跌</span><strong class="${pctClass(priceChange)}">${priceChange === null ? "--" : `${priceChange > 0 ? "+" : ""}${fmt(priceChange)}%`}</strong></div>
+        <div><span>最新成交量</span><strong>${fmt(latest.volume, 0)}</strong></div>
+      </div>
+      <div class="tracking-chart tracking-kline-chart">
+        <canvas class="tracking-chart-canvas" data-tracking-chart="${escapeHtml(stock.code || "")}"></canvas>
+        <div class="chart-tip tracking-chart-tip" data-tracking-tip="${escapeHtml(stock.code || "")}" aria-hidden="true"></div>
+        ${stock.klines?.length ? "" : `<div class="tracking-chart-empty">等待最近7天K线数据</div>`}
+      </div>
+      <section class="tracking-advice">
+        <div class="tracking-advice-head">
+          <span>建仓建议</span>
+          <strong class="${advice.className}">${advice.action}</strong>
+        </div>
+        <div class="tracking-advice-levels">
+          <span>回踩 <b>${advice.levels.pullback}</b></span>
+          <span>突破 <b>${advice.levels.breakout}</b></span>
+          <span>止损 <b>${advice.levels.stopLoss}</b></span>
+        </div>
+        <p>${advice.text}</p>
+      </section>
+      <section class="tracking-news" data-no-stock-open>
+        <div class="tracking-news-head"><span>最近新闻</span><small>${newsLoading && !news.length ? "同步中" : "近 3 天 Top3"}</small></div>
+        ${news.length ? news.slice(0, 3).map((item) => `
+          <a href="${escapeHtml(item.link || "#")}" target="_blank" rel="noreferrer">
+            <b>${escapeHtml(item.title || "相关新闻")}</b>
+            <span>${escapeHtml(item.source || "新闻源")} · ${escapeHtml(item.kind || "新闻")} · ${escapeHtml(item.tone || "中性观察")}</span>
+          </a>
+        `).join("") : `<p>${newsLoading ? "正在同步该股最近 3 天新闻..." : "近 3 天暂未抓取到强相关新闻。"}</p>`}
+      </section>
+    </article>
+  `;
+}
+
+function trackingBuildAdvice(stock = {}, latestSample = {}) {
+  const candles = stock.klines || [];
+  const trackedStock = asStockFromTracking(stock);
+  const advice = stockAdvice({ ...trackedStock, candles });
+  const latest = advice.latest || candles.at(-1) || {};
+  const gate = bullGateLine(candles).at(-1);
+  const gateInfo = bullGateExplanation(latest, gate);
+  const levels = advice.levels || {};
+  if (!candles.length) {
+    const pct = Number(latestSample.pct);
+    return {
+      action: "等待K线",
+      className: "flat",
+      levels: { pullback: "--", breakout: "--", stopLoss: "--" },
+      text: Number.isFinite(pct)
+        ? `当前追踪涨跌 ${fmt(pct)}%，但 K 线未补齐，先等最近 7 天数据完成后再给建仓价位。`
+        : "追踪样本不足，先等待 K 线和成交量补齐，暂不主动建仓。"
+    };
+  }
+  const close = Number(latest.close);
+  const gateValue = Number(gate);
+  let action = advice.action || gateInfo.tone || "观察";
+  let className = pctClass(close - gateValue);
+  if (Number.isFinite(close) && Number.isFinite(gateValue)) {
+    if (close >= gateValue && gateInfo.distance?.startsWith("+")) {
+      action = close > gateValue * 1.03 ? "等回踩" : "可试仓";
+      className = "up";
+    } else if (close >= gateValue * 0.98) {
+      action = "等突破";
+      className = "flat";
+    } else {
+      action = "先观察";
+      className = "down";
+    }
+  }
+  return {
+    action,
+    className,
+    levels: {
+      pullback: fmt(levels.pullbackBuy),
+      breakout: fmt(levels.breakoutBuy),
+      stopLoss: fmt(levels.stopLoss)
+    },
+    text: `${gateInfo.action || advice.plan || "等待价格与量能共振。"} ${advice.risk ? `失效：${advice.risk}` : gateInfo.risk || ""}`
+  };
+}
+
+function trackingPriceLine(samples = []) {
+  const values = samples.map((item) => Number(item.price)).filter(Number.isFinite);
+  if (values.length < 2) return `<svg viewBox="0 0 240 72" class="tracking-line"><path d="M0 50 H240" /></svg>`;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const points = values.map((value, index) => {
+    const x = values.length === 1 ? 0 : (index / (values.length - 1)) * 240;
+    const y = 64 - ((value - min) / span) * 54;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const positive = values.at(-1) >= values[0];
+  return `<svg viewBox="0 0 240 72" class="tracking-line ${positive ? "up" : "down"}"><polyline points="${points}" /></svg>`;
+}
+
+function trackingVolumeBars(samples = []) {
+  const values = samples.map((item) => Number(item.volume)).filter(Number.isFinite).slice(-24);
+  if (!values.length) return "";
+  const max = Math.max(...values) || 1;
+  return `
+    <div class="tracking-volume-bars">
+      ${values.map((value) => `<span style="height:${Math.max(8, (value / max) * 46).toFixed(1)}px"></span>`).join("")}
+    </div>
+  `;
+}
+
+function trackingKlineChart(stock = {}) {
+  const rows = (stock.klines || []).filter((row) => ["open", "close", "high", "low"].every((key) => Number.isFinite(Number(row[key])))).slice(-7);
+  if (!rows.length) {
+    return `${trackingPriceLine(stock.samples || [])}${trackingVolumeBars(stock.samples || [])}<div class="tracking-chart-empty">等待最近7天K线数据</div>`;
+  }
+  const width = 360;
+  const height = 226;
+  const pad = { l: 42, r: 54, t: 32, b: 32 };
+  const mainBottom = 150;
+  const allPrices = rows.flatMap((row) => [Number(row.high), Number(row.low)]);
+  const bullGate = bullGateLine(rows);
+  allPrices.push(...bullGate.filter((value) => Number.isFinite(Number(value))));
+  const max = Math.max(...allPrices);
+  const min = Math.min(...allPrices);
+  const y = (value) => pad.t + (max - value) / Math.max(0.01, max - min) * (mainBottom - pad.t);
+  const xStep = (width - pad.l - pad.r) / rows.length;
+  const maxVolume = Math.max(...rows.map((row) => Number(row.volume || 0)), 1);
+  const axis = [0, 1, 2, 3, 4].map((index) => {
+    const yy = pad.t + index * (mainBottom - pad.t) / 4;
+    const price = max - (max - min) * index / 4;
+    return `<g><line x1="${pad.l}" y1="${yy.toFixed(1)}" x2="${width - pad.r}" y2="${yy.toFixed(1)}" /><text x="${width - pad.r + 5}" y="${(yy + 4).toFixed(1)}">${fmt(price)}</text></g>`;
+  }).join("");
+  const candles = rows.map((row, index) => {
+    const x = pad.l + index * xStep + xStep / 2;
+    const open = Number(row.open);
+    const close = Number(row.close);
+    const high = Number(row.high);
+    const low = Number(row.low);
+    const up = close >= open;
+    const bodyY = Math.min(y(open), y(close));
+    const bodyH = Math.max(2, Math.abs(y(open) - y(close)));
+    const bodyW = Math.max(7, xStep * 0.42);
+    const title = `${row.day || `第${index + 1}天`} X:${index + 1}/${rows.length} 开:${fmt(open)} 高:${fmt(high)} 低:${fmt(low)} 收:${fmt(close)} Y:${fmt(close)} 成交量:${fmt(row.volume, 0)}`;
+    return `
+      <g class="tracking-candle ${up ? "up" : "down"}">
+        <title>${escapeHtml(title)}</title>
+        <line x1="${x.toFixed(1)}" y1="${y(high).toFixed(1)}" x2="${x.toFixed(1)}" y2="${y(low).toFixed(1)}"></line>
+        <rect x="${(x - bodyW / 2).toFixed(1)}" y="${bodyY.toFixed(1)}" width="${bodyW.toFixed(1)}" height="${bodyH.toFixed(1)}"></rect>
+      </g>
+    `;
+  }).join("");
+  const bullPoints = bullGate.map((value, index) => {
+    const x = pad.l + index * xStep + xStep / 2;
+    return Number.isFinite(Number(value)) ? `${x.toFixed(1)},${y(value).toFixed(1)}` : "";
+  }).filter(Boolean).join(" ");
+  const bullDots = bullGate.map((value, index) => {
+    if (!Number.isFinite(Number(value))) return "";
+    const x = pad.l + index * xStep + xStep / 2;
+    const title = `${rows[index]?.day || `第${index + 1}天`} 牛门线 X:${index + 1}/${rows.length} Y:${fmt(value)}`;
+    return `<circle cx="${x.toFixed(1)}" cy="${y(value).toFixed(1)}" r="5"><title>${escapeHtml(title)}</title></circle>`;
+  }).join("");
+  const volumes = rows.map((row, index) => {
+    const x = pad.l + index * xStep + xStep * 0.25;
+    const h = Math.max(2, Number(row.volume || 0) / maxVolume * 34);
+    const up = Number(row.close) >= Number(row.open);
+    return `<rect class="${up ? "up" : "down"}" x="${x.toFixed(1)}" y="${(height - pad.b - h).toFixed(1)}" width="${Math.max(8, xStep * 0.5).toFixed(1)}" height="${h.toFixed(1)}"><title>${escapeHtml(`${row.day || ""} 成交量 Y:${fmt(row.volume, 0)}`)}</title></rect>`;
+  }).join("");
+  const labels = rows.map((row, index) => {
+    const x = pad.l + index * xStep + xStep / 2;
+    return `<text x="${x.toFixed(1)}" y="${height - 12}" text-anchor="middle">${escapeHtml(String(row.day || "").slice(5) || `D${index + 1}`)}</text>`;
+  }).join("");
+  return `
+    <svg viewBox="0 0 ${width} ${height}" class="tracking-kline-svg" role="img" aria-label="${escapeHtml(stock.name || stock.code || "追踪K线")} 最近7天K线和牛门线">
+      <rect x="0" y="0" width="${width}" height="${height}" rx="8"></rect>
+      <g class="tracking-axis">${axis}</g>
+      <line class="tracking-main-separator" x1="${pad.l}" y1="${mainBottom + 12}" x2="${width - pad.r}" y2="${mainBottom + 12}"></line>
+      <g class="tracking-candles">${candles}</g>
+      <g class="tracking-bullgate">
+        <polyline class="tracking-bullgate-rail" points="${bullPoints}"><title>牛门线上轨</title></polyline>
+        <polyline class="tracking-bullgate-core" points="${bullPoints}"><title>牛门线下轨</title></polyline>
+        ${bullDots}
+      </g>
+      <g class="tracking-volume">${volumes}</g>
+      <g class="tracking-xlabels">${labels}</g>
+      <text x="${pad.l}" y="13" class="tracking-chart-label">K线 + 牛门线</text>
+      <text x="${width - pad.r - 42}" y="13" class="tracking-chart-label">Y 价格</text>
+    </svg>
   `;
 }
 
@@ -2684,7 +3085,7 @@ function portfolioTOrders(orders = []) {
       ${orders.map((order) => `
         <div class="t-order ${order.side === "买入" || order.side === "买回" ? "buy" : order.side === "止损" ? "risk" : "sell"}">
           <span>${order.side}</span>
-          <strong>${fmt(order.price)} · ${order.qty || 0}股</strong>
+          <strong>${fmt(order.price)} · ${fmt(order.qty || 0, 0)}股</strong>
           <small>${order.note || ""}</small>
         </div>
       `).join("")}
@@ -2885,6 +3286,7 @@ function stockModal() {
   const advice = stockAdvice(stock);
   const discussionReady = stockDiscussionReady(stock);
   const discussionHint = stockDiscussionPendingText(stock);
+  const tracked = isTrackedStock(stock.code);
   return `
     <div class="overlay open" id="stockOverlay" data-stock-code="${escapeHtml(stock.code || "")}">
       <div class="shade" data-close></div>
@@ -2896,6 +3298,7 @@ function stockModal() {
               <div class="stock-title-actions">
                 <button class="ghost title-copy-btn" data-action="copy-stock-name" data-copy-value="${escapeHtml(stock.name || "")}" title="复制股票名称">${icons.copy}<span>复制名称</span></button>
                 <button class="ghost title-copy-btn ${discussionReady ? "" : "is-disabled"}" data-action="join-stock-discussion" title="${discussionReady ? "带入详情数据并进入个股讨论" : escapeHtml(discussionHint)}" ${discussionReady ? "" : "disabled"}>${icons.chat}<span>${discussionReady ? "加入讨论" : "数据加载中"}</span></button>
+                <button class="ghost title-copy-btn ${tracked ? "is-tracked" : ""}" data-action="add-stock-tracking" title="${tracked ? "已在追踪池中" : "加入追踪池，每15分钟采集价格与成交量"}">${icons.radar}<span>${tracked ? "已追踪" : "加入追踪"}</span></button>
               </div>
             </div>
             <div class="page-subtitle">${advice.summary}</div>
@@ -3553,6 +3956,190 @@ function drawStockChart(stock) {
   ].filter(Boolean));
 }
 
+function findTrackedStock(code = "") {
+  return (state.trackingRows || []).find((item) => item.code === code) || null;
+}
+
+function drawTrackingChart(stock = {}) {
+  const canvas = document.querySelector(`[data-tracking-chart="${CSS.escape(stock.code || "")}"]`);
+  if (!canvas) return;
+  const rows = (stock.klines || []).filter((row) => ["open", "close", "high", "low"].every((key) => Number.isFinite(Number(row[key])))).slice(-7);
+  const tip = document.querySelector(`[data-tracking-tip="${CSS.escape(stock.code || "")}"]`);
+  const rect = canvas.getBoundingClientRect();
+  const wrapRect = canvas.closest(".tracking-chart")?.getBoundingClientRect() || rect;
+  const tipOffset = {
+    x: rect.left - wrapRect.left,
+    y: rect.top - wrapRect.top
+  };
+  if (rect.width < 20 || rect.height < 20) return;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  ctx.fillStyle = "#09131c";
+  ctx.fillRect(0, 0, rect.width, rect.height);
+  if (!rows.length) {
+    ctx.fillStyle = "#6f8494";
+    ctx.font = "12px system-ui";
+    ctx.fillText("等待最近7天K线数据", 18, 30);
+    if (tip) tip.classList.remove("show");
+    return;
+  }
+  const bullGate = bullGateLine(rows);
+  const pad = { l: 48, r: 58, t: 38, b: 30 };
+  const axisH = 28;
+  const axisTop = rect.height - axisH;
+  const volumeH = Math.max(46, Math.min(64, rect.height * 0.24));
+  const volumeGap = 12;
+  const volumeTop = axisTop - volumeH;
+  const mainBottom = volumeTop - volumeGap;
+  const highs = rows.map((row) => Number(row.high));
+  const lows = rows.map((row) => Number(row.low));
+  highs.push(...bullGate.filter((value) => Number.isFinite(Number(value))));
+  lows.push(...bullGate.filter((value) => Number.isFinite(Number(value))));
+  const max = Math.max(...highs);
+  const min = Math.min(...lows);
+  const xStep = (rect.width - pad.l - pad.r) / rows.length;
+  const y = (value) => pad.t + (max - value) / Math.max(0.01, max - min) * (mainBottom - pad.t - 8);
+  const chartLeft = pad.l;
+  const chartRight = rect.width - pad.r;
+
+  ctx.strokeStyle = "#1d3344";
+  ctx.fillStyle = "#6f8494";
+  ctx.font = "11px system-ui";
+  ctx.textAlign = "left";
+  ctx.fillText("价格", chartRight + 7, 16);
+  for (let i = 0; i < 5; i += 1) {
+    const yy = pad.t + i * (mainBottom - pad.t - 8) / 4;
+    const price = max - (max - min) * i / 4;
+    ctx.beginPath();
+    ctx.moveTo(chartLeft, yy);
+    ctx.lineTo(chartRight, yy);
+    ctx.stroke();
+    ctx.fillStyle = "#6f8494";
+    ctx.font = "11px system-ui";
+    ctx.fillText(fmt(price), chartRight + 7, yy + 4);
+  }
+
+  rows.forEach((row, i) => {
+    const x = pad.l + i * xStep + xStep / 2;
+    const open = Number(row.open);
+    const close = Number(row.close);
+    const high = Number(row.high);
+    const low = Number(row.low);
+    const up = close >= open;
+    ctx.strokeStyle = up ? "#ff4d57" : "#00b070";
+    ctx.fillStyle = up ? "#ff4d57" : "#00b070";
+    ctx.beginPath();
+    ctx.moveTo(x, y(high));
+    ctx.lineTo(x, y(low));
+    ctx.stroke();
+    const bodyY = Math.min(y(open), y(close));
+    const bodyH = Math.max(2, Math.abs(y(open) - y(close)));
+    ctx.fillRect(x - xStep * 0.3, bodyY, Math.max(2, xStep * 0.6), bodyH);
+  });
+
+  drawDoubleBullGateLine(ctx, bullGate, y, pad.l, xStep);
+
+  ctx.save();
+  ctx.fillStyle = "rgba(4, 12, 19, 0.42)";
+  ctx.fillRect(chartLeft, volumeTop, chartRight - chartLeft, volumeH);
+  ctx.strokeStyle = "#1d3344";
+  ctx.setLineDash([3, 4]);
+  ctx.beginPath();
+  ctx.moveTo(chartLeft, volumeTop);
+  ctx.lineTo(chartRight, volumeTop);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  const maxVolume = Math.max(...rows.map((row) => Number(row.volume || 0)), 1);
+  rows.forEach((row, i) => {
+    const x = pad.l + i * xStep + xStep * 0.25;
+    const barH = Number(row.volume || 0) / maxVolume * (volumeH - 14);
+    ctx.fillStyle = Number(row.close) >= Number(row.open) ? "rgba(255, 77, 87, 0.56)" : "rgba(0, 176, 112, 0.56)";
+    ctx.fillRect(x, volumeTop + volumeH - Math.max(2, barH), Math.max(1, xStep * 0.5), Math.max(2, barH));
+  });
+  ctx.restore();
+
+  ctx.fillStyle = "#09131c";
+  ctx.fillRect(0, axisTop, rect.width, axisH);
+  ctx.strokeStyle = "#1d3344";
+  ctx.beginPath();
+  ctx.moveTo(chartLeft, axisTop + 0.5);
+  ctx.lineTo(chartRight, axisTop + 0.5);
+  ctx.stroke();
+  ctx.fillStyle = "#6f8494";
+  ctx.font = "11px system-ui";
+  ctx.textAlign = "center";
+  rows.forEach((row, i) => {
+    const x = pad.l + i * xStep + xStep / 2;
+    ctx.fillText(String(row.day || "").slice(5) || `D${i + 1}`, x, axisTop + 18);
+  });
+
+  const pointer = normalizeStockPointer(trackingChartPointers.get(stock.code), rect, pad, mainBottom, rows.length);
+  if (pointer) {
+    const index = Math.max(0, Math.min(rows.length - 1, Math.round((pointer.x - pad.l - xStep / 2) / xStep)));
+    const candle = rows[index];
+    const px = pad.l + index * xStep + xStep / 2;
+    const pointerPrice = max - ((pointer.y - pad.t) / Math.max(1, mainBottom - pad.t - 8)) * (max - min);
+    ctx.save();
+    ctx.strokeStyle = "rgba(218, 230, 238, 0.55)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(px, pad.t);
+    ctx.lineTo(px, mainBottom);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(chartLeft, pointer.y);
+    ctx.lineTo(chartRight, pointer.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(84, 163, 255, 0.18)";
+    ctx.fillRect(chartRight + 5, pointer.y - 11, pad.r - 8, 20);
+    ctx.fillStyle = "#dce8ef";
+    ctx.textAlign = "left";
+    ctx.font = "11px system-ui";
+    ctx.fillText(fmt(pointerPrice), chartRight + 9, pointer.y + 4);
+    ctx.restore();
+    updateTrackingChartTip(tip, pointer, candle, pointerPrice, bullGate[index], rect, tipOffset);
+  } else if (tip) {
+    tip.classList.remove("show");
+  }
+
+  drawChartLineLegend(ctx, pad.l, 18, [
+    { color: "#ff4d57", label: "红K 多方" },
+    { color: "#00b070", label: "绿K 空方" },
+    { color: "#2ee6d6", label: "牛门线" }
+  ]);
+}
+
+function updateTrackingChartTip(tip, pointer, candle, price, bullGate, rect, offset = { x: 0, y: 0 }) {
+  if (!tip || !candle) return;
+  const left = pointer.x > rect.width * 0.62 ? pointer.x - 172 : pointer.x + 12;
+  const top = pointer.y > rect.height * 0.52 ? pointer.y - 112 : pointer.y + 12;
+  tip.style.left = `${Math.max(8, offset.x + left)}px`;
+  tip.style.top = `${Math.max(8, offset.y + top)}px`;
+  tip.innerHTML = `
+    <b>${candle.day || "--"}</b>
+    <span>开 ${fmt(candle.open)} / 高 ${fmt(candle.high)}</span>
+    <span>低 ${fmt(candle.low)} / 收 ${fmt(candle.close)}</span>
+    <span>成交量 ${fmt(candle.volume, 0)}</span>
+    <span>Y ${fmt(price)} · 牛门线 ${fmt(bullGate)}</span>
+  `;
+  tip.classList.add("show");
+}
+
+function scheduleTrackingChartsDraw() {
+  if (trackingChartDrawFrame) return;
+  trackingChartDrawFrame = requestAnimationFrame(() => {
+    trackingChartDrawFrame = 0;
+    if (state.page !== "tracking") return;
+    (state.trackingRows || []).forEach((stock) => drawTrackingChart(stock));
+  });
+}
+
 function scheduleStockChartDraw() {
   if (stockChartDrawFrame) return;
   stockChartDrawFrame = requestAnimationFrame(() => {
@@ -3654,6 +4241,11 @@ function drawLine(ctx, values, color, y, left, step, options = {}) {
   ctx.restore();
 }
 
+function drawDoubleBullGateLine(ctx, values, y, left, step) {
+  drawLine(ctx, values, "rgba(46, 230, 214, 0.58)", (value) => y(value) - 2.4, left, step, { dash: [6, 4], width: 1.8 });
+  drawLine(ctx, values, "#2ee6d6", (value) => y(value) + 2.4, left, step, { width: 1.2 });
+}
+
 function drawIndexChart(index) {
   const canvas = document.querySelector("#indexChart");
   const rows = (index?.klines || []).filter((row) => Number.isFinite(Number(row.close))).slice(-10);
@@ -3748,7 +4340,7 @@ function render(scrollAnchor = captureScrollAnchors()) {
   const stockScroll = captureStockModalScroll();
   skipAdvisorFocusRestoreOnce = false;
   if (state.page === "radar" || state.page === "sector") state.page = "home";
-  const pages = { home: homePage, recommend: recommendPage, portfolio: portfolioPage, discussion: discussionPage, settings: settingsPage };
+  const pages = { home: homePage, recommend: recommendPage, portfolio: portfolioPage, tracking: trackingPage, discussion: discussionPage, settings: settingsPage };
   suppressScrollTracking = true;
   app.innerHTML = shell(pages[state.page]());
   restoreScrollAnchors(scrollAnchor);
@@ -3757,6 +4349,7 @@ function render(scrollAnchor = captureScrollAnchors()) {
   }, 140);
   restoreStockModalScroll(stockScroll);
   if (state.modalStock) scheduleStockChartDraw();
+  if (state.page === "tracking") scheduleTrackingChartsDraw();
   if (state.modalIndex) requestAnimationFrame(() => drawIndexChart(state.modalIndex));
   if (advisorFocus) restoreAdvisorFocus(advisorFocus);
   else focusAdvisorInput();
@@ -3769,9 +4362,14 @@ app.addEventListener("pointerdown", (event) => {
 
 app.addEventListener("click", (event) => {
   if (event.target.closest(".sector-news a")) return;
+  if (event.target.closest(".tracking-news a")) return;
   if (event.target.closest("[data-action='clear-sector-search']")) {
     update({ sectorSearch: "", sectorSearchDraft: "", sectorPage: 1 });
     loadSectorNewsForTop();
+    return;
+  }
+  if (event.target.closest("[data-action='clear-tracking-search']")) {
+    update({ trackingSearch: "", trackingPageNo: 1 });
     return;
   }
   if (event.target.closest("[data-action='submit-sector-search']")) {
@@ -3792,16 +4390,27 @@ app.addEventListener("click", (event) => {
     joinStockDiscussion();
     return;
   }
+  if (event.target.closest("[data-action='add-stock-tracking']")) {
+    addModalStockToTracking();
+    return;
+  }
+  const removeTracking = event.target.closest("[data-action='remove-tracking']");
+  if (removeTracking) {
+    removeTrackingStock(removeTracking.dataset.trackingCode);
+    return;
+  }
   const page = event.target.closest("[data-page]")?.dataset.page;
   const sectorId = event.target.closest("[data-sector]")?.dataset.sector;
   const stockCode = event.target.closest("[data-stock]")?.dataset.stock;
   const indexSymbol = event.target.closest("[data-index]")?.dataset.index;
   const sectorSort = event.target.closest("[data-sector-sort]")?.dataset.sectorSort;
   const sectorPageAction = event.target.closest("[data-sector-page]")?.dataset.sectorPage;
+  const trackingPageAction = event.target.closest("[data-tracking-page]")?.dataset.trackingPage;
   const stockSort = event.target.closest("[data-stock-sort]")?.dataset.stockSort;
   if (page) {
     update({ page });
     if (page === "recommend") loadRecommendations();
+    if (page === "tracking") loadTracking();
     if (page === "portfolio") {
       loadAdminStatus();
       loadHoldings();
@@ -3824,6 +4433,11 @@ app.addEventListener("click", (event) => {
     update({ sectorPage: Math.min(pageInfo.pageCount, Math.max(1, nextPage)) });
     loadSectorNewsForTop();
   }
+  if (trackingPageAction) {
+    const pageInfo = trackingPageInfo();
+    const nextPage = trackingPageAction === "next" ? pageInfo.current + 1 : pageInfo.current - 1;
+    update({ trackingPageNo: Math.min(pageInfo.pageCount, Math.max(1, nextPage)) });
+  }
   if (stockSort) update({ modalStockSort: stockSort });
   const chartIndicator = event.target.closest("[data-chart-indicator]")?.dataset.chartIndicator;
   if (chartIndicator) {
@@ -3844,7 +4458,9 @@ app.addEventListener("click", (event) => {
     state.sectorStockIndexLoading = false;
     loadSectors({ silent: true, clearStockCache: true });
     if (state.page === "recommend") setTimeout(() => loadRecommendations({ force: true }), 0);
+    if (state.page === "tracking") setTimeout(() => loadTracking({ force: true }), 0);
   }
+  if (event.target.closest("[data-action='refresh-tracking']")) loadTracking({ force: true });
   if (event.target.closest("[data-action='analyze-portfolio']")) analyzePortfolioText();
   if (event.target.closest("[data-action='unlock-portfolio']")) unlockPortfolio();
   if (event.target.closest("[data-action='open-portfolio-update']")) update({ modalPortfolioUpdate: true, ocrProgress: "" });
@@ -3947,6 +4563,19 @@ app.addEventListener("input", (event) => {
     updateSectorSearchDraftStatus(event.target.value);
     renderSectorSearchSuggestions(event.target.value);
   }
+  if (event.target.matches("[data-tracking-search]")) {
+    const value = event.target.value;
+    const cursor = event.target.selectionStart ?? value.length;
+    state.trackingSearch = value;
+    state.trackingPageNo = 1;
+    render();
+    requestAnimationFrame(() => {
+      const input = document.querySelector("[data-tracking-search]");
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(cursor, cursor);
+    });
+  }
   if (event.target.matches("[data-setting]")) {
     const key = event.target.dataset.setting;
     const value = event.target.type === "checkbox" ? event.target.checked : event.target.value;
@@ -4010,24 +4639,44 @@ window.addEventListener("keydown", (event) => {
 });
 
 app.addEventListener("pointermove", (event) => {
+  const trackingCanvas = event.target.closest("[data-tracking-chart]");
+  if (trackingCanvas) {
+    const code = trackingCanvas.dataset.trackingChart;
+    const rect = trackingCanvas.getBoundingClientRect();
+    trackingChartPointers.set(code, {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top
+    });
+    scheduleTrackingChartsDraw();
+    return;
+  }
   const canvas = event.target.closest("#stockChart");
-  if (!canvas || !state.modalStock) return;
-  const rect = canvas.getBoundingClientRect();
-  stockChartPointer = {
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top
-  };
-  scheduleStockChartDraw();
+  if (canvas && state.modalStock) {
+    const rect = canvas.getBoundingClientRect();
+    stockChartPointer = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top
+    };
+    scheduleStockChartDraw();
+  }
 });
 
 app.addEventListener("pointerleave", (event) => {
-  if (!event.target.closest("#stockChart") || !state.modalStock) return;
-  stockChartPointer = null;
-  scheduleStockChartDraw();
+  const trackingCanvas = event.target.closest("[data-tracking-chart]");
+  if (trackingCanvas) {
+    trackingChartPointers.delete(trackingCanvas.dataset.trackingChart);
+    scheduleTrackingChartsDraw();
+    return;
+  }
+  if (event.target.closest("#stockChart") && state.modalStock) {
+    stockChartPointer = null;
+    scheduleStockChartDraw();
+  }
 }, true);
 
 window.addEventListener("resize", () => {
   if (state.modalStock) scheduleStockChartDraw();
+  if (state.page === "tracking") scheduleTrackingChartsDraw();
   if (state.modalIndex) drawIndexChart(state.modalIndex);
 });
 
@@ -4038,5 +4687,9 @@ window.addEventListener("scroll", () => {
 
 render();
 loadSectors();
+loadTracking({ silent: true });
 setInterval(() => requestAutoRefresh("home"), homeRefreshMs);
 setInterval(() => requestAutoRefresh("recommend"), recommendRefreshMs);
+setInterval(() => {
+  if (state.page === "tracking") loadTracking({ force: true, silent: true });
+}, recommendRefreshMs);

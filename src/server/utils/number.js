@@ -21,17 +21,26 @@ function splitLots(totalQty, firstRatio = 0.5) {
   return second ? [first, second] : [total, 0];
 }
 
+function formatNumber(value, digits = 2) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "--";
+  const fixed = n.toFixed(digits);
+  const [integer, decimal] = fixed.split(".");
+  const sign = integer.startsWith("-") ? "-" : "";
+  const grouped = integer.replace("-", "").replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${sign}${grouped}${decimal ? `.${decimal}` : ""}`;
+}
+
 function moneyText(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "--";
-  if (Math.abs(n) >= 100_000_000) return `${(n / 100_000_000).toFixed(2)}亿`;
-  if (Math.abs(n) >= 10_000) return `${(n / 10_000).toFixed(1)}万`;
-  return n.toFixed(0);
+  if (Math.abs(n) >= 100_000_000) return `${formatNumber(n / 100_000_000, 2)}亿`;
+  if (Math.abs(n) >= 10_000) return `${formatNumber(n / 10_000, 1)}万`;
+  return formatNumber(n, 0);
 }
 
 function toFixedText(value, digits = 2) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n.toFixed(digits) : "--";
+  return formatNumber(value, digits);
 }
 
 module.exports = {
@@ -39,6 +48,7 @@ module.exports = {
   average,
   roundLot,
   splitLots,
+  formatNumber,
   moneyText,
   toFixedText
 };

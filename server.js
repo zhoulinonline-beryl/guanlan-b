@@ -38,6 +38,13 @@ const {
   updateMarketSnapshot,
   snapshotFallback
 } = require("./src/server/storage/marketSnapshotStore");
+const {
+  addTrackedStock,
+  appendTrackingSample,
+  readTrackingStore,
+  removeTrackedStock,
+  updateTrackingKlines
+} = require("./src/server/storage/trackingStore");
 const { redactLogText } = require("./src/server/utils/security");
 const { isAshareTradingAutoRefreshTime } = require("./src/server/utils/time");
 const { average, roundLot, splitLots, moneyText, toFixedText } = require("./src/server/utils/number");
@@ -57,6 +64,7 @@ const {
 } = require("./src/server/ai/kimiClient");
 const { createStartupMarketSnapshotJob } = require("./src/server/jobs/marketSnapshotJob");
 const { startRecommendationRefreshJob } = require("./src/server/jobs/recommendationRefreshJob");
+const { createTrackingRefreshJob } = require("./src/server/jobs/trackingRefreshJob");
 const { createRecommendationService } = require("./src/server/recommendations/recommendationService");
 const { createApiRouter } = require("./src/server/routes/apiRouter");
 const { createNewsService } = require("./src/server/news/newsService");
@@ -1443,6 +1451,16 @@ const ensureStartupMarketSnapshot = createStartupMarketSnapshotJob({
   getStockKline
 });
 
+const trackingRefreshJob = createTrackingRefreshJob({
+  readTrackingStore,
+  appendTrackingSample,
+  updateTrackingKlines,
+  getQuote,
+  getStockKline,
+  marketOf,
+  refreshMs: RECOMMEND_REFRESH_MS
+});
+
 const handleApi = createApiRouter({
   HOST,
   PORT,
@@ -1479,7 +1497,13 @@ const handleApi = createApiRouter({
   getIndexKline,
   getStocks,
   getStockKline,
-  getStockProfile
+  getStockProfile,
+  addTrackedStock,
+  appendTrackingSample,
+  readTrackingStore,
+  removeTrackedStock,
+  updateTrackingKlines,
+  refreshTrackedStocks: trackingRefreshJob.refreshTrackedStocks
 });
 
 function handleStatic(req, res) {
@@ -1521,4 +1545,5 @@ http.createServer((req, res) => {
     refreshRecommendations,
     refreshMs: RECOMMEND_REFRESH_MS
   });
+  trackingRefreshJob.start();
 });

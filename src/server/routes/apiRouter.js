@@ -37,7 +37,13 @@ function createApiRouter(deps) {
     getIndexKline,
     getStocks,
     getStockKline,
-    getStockProfile
+    getStockProfile,
+    addTrackedStock,
+    appendTrackingSample,
+    readTrackingStore,
+    removeTrackedStock,
+    updateTrackingKlines,
+    refreshTrackedStocks
   } = deps;
 
   function holdingsAuthStatus(req) {
@@ -205,6 +211,37 @@ function createApiRouter(deps) {
       if (!code) throw new Error("缺少 code 参数");
       const data = await getStockProfile(code, Number(url.searchParams.get("market") || marketOf(code)), name);
       return { data };
+    }],
+    ["GET", "/api/tracking", async () => ({ data: readTrackingStore() })],
+    ["POST", "/api/tracking", async ({ req }) => {
+      const body = await readJsonBody(req);
+      const code = String(body.code || "").trim();
+      if (!code) throw new Error("缺少 code 参数");
+      const market = Number.isFinite(Number(body.market)) ? Number(body.market) : marketOf(code);
+      addTrackedStock({
+        code,
+        name: body.name,
+        market
+      });
+      try {
+        const quote = await getQuote(code, market);
+        appendTrackingSample(code, quote);
+        const quoteMarket = Number.isFinite(Number(quote.market)) ? Number(quote.market) : market;
+        const kline = await getStockKline(code, quoteMarket).catch(() => null);
+        if (kline?.klines?.length) updateTrackingKlines(code, kline.klines.slice(-7));
+      } catch {
+        // 添加追踪不因首条行情采样失败而失败，后台刷新会继续补。
+      }
+      return { data: readTrackingStore() };
+    }],
+    ["DELETE", "/api/tracking", async ({ url }) => {
+      const code = url.searchParams.get("code");
+      if (!code) throw new Error("缺少 code 参数");
+      return { data: removeTrackedStock(code) };
+    }],
+    ["POST", "/api/tracking/refresh", async () => {
+      await refreshTrackedStocks({ reason: "manual" });
+      return { data: readTrackingStore() };
     }],
     ["GET", "/api/recommendations", async ({ url }) => {
       const force = url.searchParams.get("force") === "1";
