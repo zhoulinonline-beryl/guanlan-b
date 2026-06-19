@@ -271,13 +271,21 @@ function createApiRouter(deps) {
       const code = String(body.code || "").trim();
       if (!code) throw new Error("缺少 code 参数");
       const market = Number.isFinite(Number(body.market)) ? Number(body.market) : marketOf(code);
-      await addVirtualTradingStock({
+      const addResult = await addVirtualTradingStock({
         code,
         name: body.name,
         market
       });
       await refreshVirtualTrading({ reason: "add-stock", force: true }).catch(() => null);
-      return { data: virtualTradingSnapshot() };
+      return {
+        data: {
+          ...virtualTradingSnapshot(),
+          initialStockStrategy: addResult?.initialStockStrategy || null,
+          initialStockStrategyError: addResult?.initialStockStrategyError || "",
+          initialBacktest: addResult?.initialBacktest || null,
+          initialBacktestError: addResult?.initialBacktestError || ""
+        }
+      };
     }],
     ["DELETE", "/api/virtual-trading/stock", async ({ url }) => {
       const code = url.searchParams.get("code");

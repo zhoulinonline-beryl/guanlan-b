@@ -284,10 +284,16 @@ describe("virtual trading service", () => {
         marketOf: () => 1
       });
       service.initAccount(100000);
-      await service.addStock({ code: "600000", name: "浦发银行", market: 1 });
+      const addResult = await service.addStock({ code: "600000", name: "浦发银行", market: 1 });
+      assert.equal(addResult.initialStockStrategy.code, "600000");
+      assert.match(addResult.initialStockStrategy.summary, /策略优化/);
+      assert.ok(addResult.initialBacktest);
+      assert.equal(addResult.initialBacktest.optimizationApplied, true);
+      assert.equal(addResult.initialBacktest.stockCharts.length, 1);
       const afterAdd = store.readVirtualTradingStore();
       assert.equal(afterAdd.stockStrategies.length, 1);
       assert.equal(afterAdd.stockStrategies[0].code, "600000");
+      assert.equal(afterAdd.lastBacktest.optimizationApplied, true);
       assert.match(afterAdd.stockStrategies[0].summary, /最近一年策略优化|策略优化/);
       assert.equal(Number.isFinite(Number(afterAdd.stockStrategies[0].strategy.buyThreshold)), true);
       assert.ok(afterAdd.watchlist[0].klines.length > 1);

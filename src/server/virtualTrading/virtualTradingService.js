@@ -458,8 +458,30 @@ function createVirtualTradingService({
 
   async function addStock(stock = {}) {
     const store = addVirtualTradingStock(stock);
-    await generateAndSaveStockStrategyForAddedStock(store, stock).catch(() => null);
-    return readVirtualTradingStore();
+    let initialStockStrategy = null;
+    let initialStockStrategyError = "";
+    let initialBacktest = null;
+    let initialBacktestError = "";
+    try {
+      initialStockStrategy = await generateAndSaveStockStrategyForAddedStock(store, stock);
+    } catch (error) {
+      initialStockStrategyError = error.message || "初始化交易策略生成失败";
+    }
+    if (initialStockStrategy) {
+      try {
+        const replay = await runBacktest({ useOptimization: true });
+        initialBacktest = replay.backtest || null;
+      } catch (error) {
+        initialBacktestError = error.message || "按组合最优解回放失败";
+      }
+    }
+    return {
+      ...snapshot(),
+      initialStockStrategy,
+      initialStockStrategyError,
+      initialBacktest,
+      initialBacktestError
+    };
   }
 
   async function generateAndSaveStockStrategyForAddedStock(store = {}, stock = {}) {
@@ -648,9 +670,10 @@ function createVirtualTradingService({
     let strategy = resolveBacktestStrategy(store, { strategyOverride, useOptimization });
     const startingStrategy = { ...strategy };
     const dates = [...dateSet].sort();
-    const appliedStockStrategies = useOptimization && store.lastBacktest?.stockStrategyAdvice?.length
-      ? store.lastBacktest.stockStrategyAdvice
-      : store.stockStrategies;
+    const appliedStockStrategies = mergeStockStrategies(
+      useOptimization && store.lastBacktest?.stockStrategyAdvice?.length ? store.lastBacktest.stockStrategyAdvice : [],
+      store.stockStrategies
+    );
     const simulation = simulateBacktestStrategy({ klineByCode, dates, capital, strategy, stockStrategies: appliedStockStrategies, adaptive: true });
     strategy = simulation.strategy;
 
@@ -782,6 +805,17 @@ function resolveBacktestStrategy(store = {}, { strategyOverride } = {}) {
 
 function cleanStrategyCode(value = "") {
   return String(value || "").match(/([03648]\d{5}|9\d{5})/)?.[1] || "";
+}
+
+function mergeStockStrategies(...groups) {
+  const byCode = new Map();
+  for (const group of groups) {
+    for (const item of Array.isArray(group) ? group : []) {
+      const code = cleanStrategyCode(item.code || item.stock?.code);
+      if (code && item.strategy) byCode.set(code, { ...item, code });
+    }
+  }
+  return [...byCode.values()];
 }
 
 function stockStrategyMap(stockStrategies = []) {
