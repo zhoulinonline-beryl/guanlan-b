@@ -49,6 +49,85 @@ button {
   cursor: pointer;
 }
 
+.app-auth-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(84, 163, 255, 0.14), transparent 34%),
+    linear-gradient(180deg, #08121b, #050b10);
+}
+
+.app-auth-card {
+  width: min(460px, 100%);
+  display: grid;
+  gap: 18px;
+  border: 1px solid rgba(84, 163, 255, 0.2);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(10, 23, 35, 0.98), rgba(5, 13, 21, 0.98));
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  padding: 26px;
+}
+
+.auth-brand {
+  align-items: center;
+  min-height: auto;
+}
+
+.auth-eyebrow {
+  display: inline-flex;
+  color: #9dccff;
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.app-auth-card h1 {
+  margin: 0;
+  color: #f7fbff;
+  font-size: 24px;
+  line-height: 1.28;
+}
+
+.app-auth-card p {
+  margin: 10px 0 0;
+  color: #91a4b2;
+  line-height: 1.7;
+}
+
+.app-auth-card label {
+  display: grid;
+  gap: 7px;
+}
+
+.app-auth-card label span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.app-auth-card input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  background: #071018;
+  color: var(--ink);
+  padding: 10px 12px;
+}
+
+.app-auth-card input:focus {
+  border-color: rgba(84, 163, 255, 0.56);
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(84, 163, 255, 0.08);
+}
+
+.auth-submit {
+  min-height: 42px;
+  border-radius: 10px;
+}
+
 .shell {
   min-height: 100vh;
   display: grid;
