@@ -2614,6 +2614,61 @@ button.virtual-backtest-chart-button.is-loading::before {
   border-color: rgba(84, 163, 255, 0.7);
 }
 
+.tracking-search-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.tracking-search-head,
+.tracking-search-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tracking-search-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tracking-search-results {
+  display: grid;
+  gap: 8px;
+}
+
+.tracking-search-result {
+  border: 1px solid rgba(119, 151, 175, 0.16);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(255,255,255,0.025);
+}
+
+.tracking-search-stock {
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tracking-search-stock strong,
+.tracking-search-stock span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tracking-search-stock span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .tracking-pager {
   margin-top: 14px;
 }

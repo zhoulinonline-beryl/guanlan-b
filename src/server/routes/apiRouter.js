@@ -29,6 +29,7 @@ function createApiRouter(deps) {
     refreshRecommendations,
     getSectorNewsBatch,
     getQuote,
+    searchStocksByKeyword,
     marketOf,
     updateMarketSnapshot,
     snapshotFallback,
@@ -354,6 +355,12 @@ function createApiRouter(deps) {
         if (!data) throw error;
         data = { ...data, snapshotFallback: true };
       }
+      return { data };
+    }],
+    ["GET", "/api/stocks/search", async ({ url }) => {
+      const query = String(url.searchParams.get("q") || url.searchParams.get("keyword") || "").trim();
+      if (!query) return { data: [] };
+      const data = typeof searchStocksByKeyword === "function" ? await searchStocksByKeyword(query) : [];
       return { data };
     }],
     ["GET", "/api/sectors", async ({ url }) => {

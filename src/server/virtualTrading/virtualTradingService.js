@@ -72,6 +72,17 @@ function previousYearRange(now = new Date()) {
   };
 }
 
+function previousSixMonthRange(now = new Date()) {
+  const start = new Date(now);
+  const targetMonth = (start.getMonth() + 12 - 6) % 12;
+  start.setMonth(start.getMonth() - 6);
+  if (start.getMonth() !== targetMonth) start.setDate(0);
+  return {
+    startDate: formatDateText(start),
+    endDate: formatDateText(now)
+  };
+}
+
 function backtestTradingSlots() {
   const slots = [];
   const pushRange = (startHour, startMinute, endHour, endMinute) => {
@@ -579,7 +590,7 @@ function createVirtualTradingService({
     const store = readVirtualTradingStore();
     if (!store.account && !Number(initialCapital)) throw new Error("请先设置虚拟满仓金额，或为回测输入初始资金");
     if (!store.watchlist.length) throw new Error("请先从股票详情页加入虚拟交易股票");
-    const defaults = previousYearRange();
+    const defaults = previousSixMonthRange();
     const start = normalizeDateText(startDate) || defaults.startDate;
     const end = normalizeDateText(endDate) || defaults.endDate;
     if (start > end) throw new Error("回测开始日期不能晚于结束日期");
