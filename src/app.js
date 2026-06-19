@@ -1764,7 +1764,22 @@ async function addModalStockToVirtualTrading() {
       })
     });
     update({ virtualTrading: json.data || null, virtualTradingLoading: false });
-    showToast(`已加入虚拟交易，并尝试基于最近一年策略优化生成策略：${stock.name || stock.code}`);
+    if (json.data?.initialStockStrategy && json.data?.initialBacktest) {
+      const strategyName = json.data.initialStockStrategy?.basis?.candidateName || "初始化策略";
+      const pnl = Number(json.data.initialBacktest.pnlPct);
+      const pnlText = Number.isFinite(pnl) ? `，组合回放收益 ${pnl > 0 ? "+" : ""}${fmt(pnl)}%` : "";
+      showToast(`已加入虚拟交易，已生成${strategyName}并按组合最优解回放${pnlText}`);
+    } else if (json.data?.initialStockStrategy && json.data?.initialBacktestError) {
+      const strategyName = json.data.initialStockStrategy?.basis?.candidateName || "初始化策略";
+      showToast(`已生成${strategyName}，组合最优解回放稍后重试：${json.data.initialBacktestError}`);
+    } else if (json.data?.initialStockStrategy) {
+      const strategyName = json.data.initialStockStrategy?.basis?.candidateName || "初始化策略";
+      showToast(`已加入虚拟交易，已生成${strategyName}：${stock.name || stock.code}`);
+    } else if (json.data?.initialStockStrategyError) {
+      showToast(`已加入虚拟交易，初始化策略稍后重试：${json.data.initialStockStrategyError}`);
+    } else {
+      showToast(`已加入虚拟交易，暂无足够K线生成初始化策略：${stock.name || stock.code}`);
+    }
   } catch (error) {
     update({ virtualTradingLoading: false, virtualTradingError: error.message });
   }
