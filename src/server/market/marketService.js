@@ -592,13 +592,14 @@ function createMarketService({
     return (await withTencentStockQuotes(stocks, window)).sort((a, b) => Number(b.mainFlow || 0) - Number(a.mainFlow || 0));
   }
 
-  async function getStockKline(code, market) {
+  async function getStockKline(code, market, options = {}) {
     const resolvedMarket = market ?? marketOf(code);
     const symbol = symbolOf(code, resolvedMarket);
     const preferred = marketDataSource();
+    const count = Math.max(30, Math.min(900, Number(options.count || options.limit || 120) || 120));
     if (preferred === "tencent") {
       try {
-        const klines = await getTencentKlines(symbol, 120);
+        const klines = await getTencentKlines(symbol, count);
         return { code, market: resolvedMarket, secid: symbol, klines, source: "tencent" };
       } catch {
         // 继续走其它 K 线源兜底。
@@ -606,7 +607,7 @@ function createMarketService({
     }
     if (preferred === "sina") {
       try {
-        const klines = await getSinaKlines(symbol, 120);
+        const klines = await getSinaKlines(symbol, count);
         return { code, market: resolvedMarket, secid: symbol, klines, source: "sina" };
       } catch {
         // 继续走其它 K 线源兜底。
@@ -615,24 +616,24 @@ function createMarketService({
     if (preferred === "eastmoney") {
       try {
         const secid = `${resolvedMarket}.${code}`;
-        const klines = await getKlines(secid, 120);
+        const klines = await getKlines(secid, count);
         return { code, market: resolvedMarket, secid, klines, source: "eastmoney" };
       } catch {
         // 继续走其它 K 线源兜底。
       }
     }
     try {
-      const klines = await getTencentKlines(symbol, 120);
+      const klines = await getTencentKlines(symbol, count);
       return { code, market: resolvedMarket, secid: symbol, klines, source: "tencent" };
     } catch {
       // 东财和新浪作为 K 线兜底，实时个股行情仍由腾讯 quote 接口提供。
     }
     const secid = `${resolvedMarket}.${code}`;
     try {
-      const klines = await getKlines(secid, 120);
+      const klines = await getKlines(secid, count);
       return { code, market: resolvedMarket, secid, klines, source: "eastmoney" };
     } catch {
-      const klines = await getSinaKlines(symbol, 120);
+      const klines = await getSinaKlines(symbol, count);
       return { code, market: resolvedMarket, secid, klines, source: "sina" };
     }
   }

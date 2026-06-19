@@ -59,14 +59,14 @@
 - 腾讯行情接口：个股实时行情。
 - 东方财富接口：板块资金、指数、K 线等。
 - Kimi 国内版/Moonshot CN、Kimi 国际版/Moonshot AI、DeepSeek、MiniMax、GLM：新闻政策总结、持仓文本解析、个股讨论。
-- OCR：Kimi 使用 `kimi-k2.6` 视觉能力；DeepSeek 预留 `deepseek-ocr`；MiniMax 使用 `MiniMax-VL-01`；GLM 使用专用 `glm-ocr` layout parsing 接口。
+- OCR：Kimi 默认使用 `kimi-k2.5` 视觉能力；DeepSeek 预留 `deepseek-ocr`；MiniMax 使用 `MiniMax-VL-01`；GLM 使用专用 `glm-ocr` layout parsing 接口。
 
 默认模型：
 
 - 默认供应商：`kimi-cn`
-- 文本/联网分析模型：`kimi-k2.6`
-- 视觉识别模型：`kimi-k2.6`
-- 观澜理财师：`kimi-k2.6`
+- 文本/联网分析模型：`kimi-k2.5`
+- 视觉识别模型：`kimi-k2.5`
+- 观澜理财师：`kimi-k2.5`
 
 其它供应商默认模型：
 
@@ -330,9 +330,9 @@ AI_PROVIDER=kimi-cn
 AI_API_KEY=sk-xxx
 AI_API_URL=https://api.moonshot.cn/v1/chat/completions
 AI_OCR_API_URL=
-AI_TEXT_MODEL=kimi-k2.6
-AI_VISION_MODEL=kimi-k2.6
-ADVISOR_MODEL=kimi-k2.6
+AI_TEXT_MODEL=kimi-k2.5
+AI_VISION_MODEL=kimi-k2.5
+ADVISOR_MODEL=kimi-k2.5
 NODE_ENV=production
 ```
 

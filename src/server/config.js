@@ -36,14 +36,15 @@ const ADMIN_FILE = process.env.GUANLAN_ADMIN_FILE || path.join(DATA_DIR, "admin.
 const CACHE_FILE = process.env.GUANLAN_CACHE_FILE || path.join(DATA_DIR, "cache.json");
 const MARKET_SNAPSHOT_FILE = process.env.GUANLAN_MARKET_SNAPSHOT_FILE || path.join(DATA_DIR, "market-snapshot.json");
 const TRACKING_FILE = process.env.GUANLAN_TRACKING_FILE || path.join(DATA_DIR, "tracking.json");
+const VIRTUAL_TRADING_FILE = process.env.GUANLAN_VIRTUAL_TRADING_FILE || path.join(DATA_DIR, "virtual-trading.json");
 
 const AI_PROVIDERS = {
   "kimi-cn": {
     label: "Kimi 国内版 / Moonshot CN",
     apiUrl: "https://api.moonshot.cn/v1/chat/completions",
-    textModel: "kimi-k2.6",
-    visionModel: "kimi-k2.6",
-    advisorModel: "kimi-k2.6",
+    textModel: "kimi-k2.5",
+    visionModel: "kimi-k2.5",
+    advisorModel: "kimi-k2.5",
     ocrMode: "chatVision",
     supportsWebSearch: true,
     supportsVision: true
@@ -51,9 +52,9 @@ const AI_PROVIDERS = {
   "kimi-intl": {
     label: "Kimi 国际版 / Moonshot AI",
     apiUrl: "https://api.moonshot.ai/v1/chat/completions",
-    textModel: "kimi-k2.6",
-    visionModel: "kimi-k2.6",
-    advisorModel: "kimi-k2.6",
+    textModel: "kimi-k2.5",
+    visionModel: "kimi-k2.5",
+    advisorModel: "kimi-k2.5",
     ocrMode: "chatVision",
     supportsWebSearch: true,
     supportsVision: true
@@ -148,6 +149,7 @@ module.exports = {
   CACHE_FILE,
   MARKET_SNAPSHOT_FILE,
   TRACKING_FILE,
+  VIRTUAL_TRADING_FILE,
   AI_PROVIDERS,
   DEFAULT_SETTINGS,
   CN_MARKET_CLOSED_DATES_2026,
