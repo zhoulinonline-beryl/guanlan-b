@@ -5915,21 +5915,62 @@ canvas {
   cursor: pointer;
 }
 
+.virtual-position-table,
+.virtual-record-table {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 8px;
+}
+
 .virtual-position-table table,
 .virtual-record-table table {
-  min-width: 820px;
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+  table-layout: auto;
 }
 
 .virtual-position-table th,
 .virtual-position-table td,
 .virtual-record-table th,
 .virtual-record-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
   white-space: nowrap;
+}
+
+.virtual-position-table th,
+.virtual-record-table th {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(255,255,255,0.025);
+}
+
+.virtual-position-table tbody tr:hover,
+.virtual-record-table tbody tr:hover {
+  background: rgba(84, 163, 255, 0.06);
+}
+
+.virtual-position-table tr:last-child td,
+.virtual-record-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.virtual-position-table th:first-child,
+.virtual-position-table td:first-child,
+.virtual-record-table th:nth-child(2),
+.virtual-record-table td:nth-child(2),
+.virtual-record-table th:last-child,
+.virtual-record-table td:last-child {
+  text-align: left;
 }
 
 .virtual-record-table th:last-child,
 .virtual-record-table td:last-child {
-  width: 28%;
+  width: 30%;
   min-width: 220px;
   white-space: normal;
 }
@@ -6148,72 +6189,6 @@ canvas {
     text-align: right;
   }
 
-  .virtual-position-table table,
-  .virtual-record-table table,
-  .virtual-position-table thead,
-  .virtual-record-table thead,
-  .virtual-position-table tbody,
-  .virtual-record-table tbody,
-  .virtual-position-table tr,
-  .virtual-record-table tr,
-  .virtual-position-table th,
-  .virtual-record-table th,
-  .virtual-position-table td,
-  .virtual-record-table td {
-    display: block;
-    width: 100%;
-    min-width: 0;
-  }
-
-  .virtual-position-table thead,
-  .virtual-record-table thead {
-    display: none;
-  }
-
-  .virtual-position-table tbody,
-  .virtual-record-table tbody {
-    display: grid;
-    gap: 10px;
-  }
-
-  .virtual-position-table tr,
-  .virtual-record-table tr {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px 12px;
-    padding: 11px 12px;
-    border: 1px solid rgba(119, 151, 175, 0.16);
-    border-radius: 8px;
-    background: rgba(255,255,255,0.025);
-  }
-
-  .virtual-position-table td,
-  .virtual-record-table td {
-    display: grid;
-    gap: 3px;
-    padding: 0;
-    border: 0;
-    white-space: normal;
-  }
-
-  .virtual-position-table td::before,
-  .virtual-record-table td::before {
-    content: attr(data-label);
-    color: var(--muted);
-    font-size: 10px;
-  }
-
-  .virtual-position-table td:first-child,
-  .virtual-record-table td:first-child,
-  .virtual-record-table td:nth-child(2),
-  .virtual-record-table td:last-child {
-    grid-column: 1 / -1;
-  }
-
-  .virtual-record-table td:last-child {
-    width: 100%;
-    min-width: 0;
-  }
 }
 
 @media (max-width: 420px) {

@@ -620,6 +620,13 @@ function money(value) {
   return fmt(n, 0);
 }
 
+function moneyFixed2(value) {
+  if (value === null || value === undefined || value === "") return "--";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "--";
+  return fmt(n, 2);
+}
+
 function pctClass(value) {
   return Number(value) > 0 ? "up" : Number(value) < 0 ? "down" : "flat";
 }
@@ -3257,13 +3264,13 @@ function virtualStockStrategyField(code = "", field, strategy = {}) {
 function virtualBacktestMonitor(result = {}) {
   const charts = result.stockCharts || [];
   if (!charts.length) return `<div class="virtual-backtest-empty">暂无模拟交易监控数据。重新模拟后会把交易点标在每只股票的价格图中。</div>`;
-  const totalPnl = Number(result.finalCapital || 0) - Number(result.initialCapital || 0);
+  const totalPnl = Number(result.pnl ?? (Number(result.finalEquity || 0) - Number(result.initialCapital || 0)));
   const totalPnlPct = Number(result.initialCapital) ? (totalPnl / Number(result.initialCapital)) * 100 : 0;
   return `
     <section class="virtual-backtest-monitor">
       <div class="section-title-row">
         <h3>模拟交易监控</h3>
-        <span>整体收益 <b class="${pctClass(totalPnl)}">${money(totalPnl)}</b> · ${totalPnlPct > 0 ? "+" : ""}${fmt(totalPnlPct)}% · ${fmt(charts.length, 0)}只 · ${fmt((result.trades || []).length, 0)}笔模拟交易</span>
+        <span>整体收益 <b class="${pctClass(totalPnl)}">${moneyFixed2(totalPnl)}</b> · ${totalPnlPct > 0 ? "+" : ""}${fmt(totalPnlPct)}% · ${fmt(charts.length, 0)}只 · ${fmt((result.trades || []).length, 0)}笔模拟交易</span>
       </div>
       <div class="virtual-monitor-shell">
         <div class="virtual-backtest-stock-grid">
@@ -3334,7 +3341,7 @@ function virtualBacktestContribution(contribution = {}, options = {}) {
     <div class="virtual-contribution-strip">
       <div>
         <span>对整体收益贡献</span>
-        <strong class="${pctClass(amount)}">${money(amount)}</strong>
+        <strong class="${pctClass(amount)}">${moneyFixed2(amount)}</strong>
       </div>
       <div>
         <span>贡献占比</span>
@@ -3342,7 +3349,7 @@ function virtualBacktestContribution(contribution = {}, options = {}) {
       </div>
       <div>
         <span>已实现 / 持仓</span>
-        <strong>${money(contribution.realizedPnl || 0)} / ${money(contribution.openPnl || 0)}</strong>
+        <strong>${moneyFixed2(contribution.realizedPnl || 0)} / ${moneyFixed2(contribution.openPnl || 0)}</strong>
       </div>
       ${strategyButton}
     </div>
@@ -3373,7 +3380,7 @@ function virtualBacktestStockTradeTable(trades = [], code = "") {
                 <td data-label="操作"><span class="trade-pill ${trade.side === "buy" ? "buy" : "sell"}">${trade.side === "buy" ? "买入" : "卖出"}</span></td>
                 <td data-label="成交">
                   <strong>${fmt(trade.price)}</strong>
-                  <small>${fmt(trade.qty, 0)}股 · ${money(trade.amount)}</small>
+                  <small>${fmt(trade.qty, 0)}股 · ${moneyFixed2(trade.amount)}</small>
                 </td>
                 <td data-label="机会"><strong>${fmt(trade.score, 1)}</strong></td>
               </tr>
@@ -3444,9 +3451,10 @@ function virtualBacktestTradeChart(rows = [], trades = [], stock = {}) {
     const index = dayIndex.get(row.day) || 0;
     return `<text x="${Math.min(width - 78, Math.max(pad.l, x(index) - 28)).toFixed(1)}" y="${height - 10}">${escapeHtml(String(row.day).slice(5))}</text>`;
   }).join("");
+  const chartSource = stock.chartSource ? ` data-chart-source="${escapeHtml(stock.chartSource)}"` : "";
   return `
     <div class="virtual-backtest-chart-wrap">
-      <button class="virtual-backtest-chart-button" data-action="open-virtual-backtest-chart" data-stock-code="${escapeHtml(stock.code || "")}" title="全屏查看 ${escapeHtml(stock.name || stock.code || "股票")} 模拟交易图表">
+      <button class="virtual-backtest-chart-button" data-action="open-virtual-backtest-chart" data-stock-code="${escapeHtml(stock.code || "")}"${chartSource} title="全屏查看 ${escapeHtml(stock.name || stock.code || "股票")} 模拟交易图表">
         <svg class="virtual-backtest-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(stock.name || stock.code || "股票")} 回测价格与成交点">
           <rect x="0" y="0" width="${width}" height="${height}"></rect>
           <g class="bt-grid">${grid}</g>
@@ -3457,6 +3465,41 @@ function virtualBacktestTradeChart(rows = [], trades = [], stock = {}) {
       </button>
     </div>
   `;
+}
+
+function normalizeVirtualChartRows(rows = [], limit = 160) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      day: String(row.day || row.date || row.time || "").slice(0, 10),
+      open: Number(row.open ?? row.close),
+      close: Number(row.close),
+      high: Number(row.high ?? row.close),
+      low: Number(row.low ?? row.close),
+      volume: Number(row.volume || 0)
+    }))
+    .filter((row) => row.day && ["open", "close", "high", "low"].every((key) => Number.isFinite(row[key])))
+    .slice(-limit);
+}
+
+function virtualStockPoolChartData(stock = {}) {
+  const code = String(stock.code || "").trim();
+  const backtestChart = (state.virtualTrading?.lastBacktest?.stockCharts || [])
+    .find((item) => String(item.stock?.code || "").trim() === code);
+  const rows = normalizeVirtualChartRows(stock.klines?.length ? stock.klines : backtestChart?.rows);
+  const liveTrades = (state.virtualTrading?.trades || []).filter((item) => String(item.code || item.stock?.code || "").trim() === code);
+  const trades = liveTrades
+    .filter((item) => item && Number.isFinite(Number(item.price)))
+    .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+  return {
+    stock: { ...(backtestChart?.stock || {}), ...stock, chartSource: "virtual-pool" },
+    rows,
+    trades
+  };
+}
+
+function virtualStockPoolChart(stock = {}) {
+  const chart = virtualStockPoolChartData(stock);
+  return virtualBacktestTradeChart(chart.rows, chart.trades, chart.stock);
 }
 
 function nearestBacktestRowIndex(rows = [], day = "") {
@@ -3477,7 +3520,7 @@ function nearestBacktestRowIndex(rows = [], day = "") {
 }
 
 function virtualBacktestMetric(label, value, kind = "money", trend = 0) {
-  const text = kind === "pct" ? `${fmt(value)}%` : kind === "number" ? fmt(value, 1) : money(value);
+  const text = kind === "pct" ? `${fmt(value)}%` : kind === "number" ? fmt(value, 1) : moneyFixed2(value);
   return `<span><small>${label}</small><strong class="${trend ? pctClass(trend) : ""}">${text}</strong></span>`;
 }
 
@@ -3521,6 +3564,7 @@ function virtualStockCard(stock = {}) {
         <strong>${escapeHtml(signal.summary || "等待下一轮演练")}</strong>
         <span>${signal.score === null || signal.score === undefined ? "--" : `机会分 ${fmt(signal.score, 1)}`} · ${escapeHtml(signal.orderPlan?.text || "等待交易方案")}</span>
       </div>
+      ${virtualStockPoolChart(stock)}
       ${savedStrategy ? virtualStockStrategyView(savedStrategy) : `<div class="virtual-stock-history-strategy muted">暂无策略优化结果，先运行策略优化并保存策略。</div>`}
       ${signal.orderPlan ? `<div class="virtual-order-plan">${escapeHtml(signal.orderPlan.trigger || "")}</div>` : ""}
       ${signal.levels ? `<div class="tracking-advice-levels">
@@ -3558,7 +3602,7 @@ function virtualPositionsTable(positions = []) {
   if (!positions.length) return `<section class="panel empty">当前没有虚拟持仓，等待系统触发第一笔买入。</section>`;
   return `
     <div class="responsive-table virtual-table virtual-position-table">
-      <table>
+      <table class="table">
         <thead>
           <tr>
             <th>股票</th>
@@ -3593,7 +3637,7 @@ function virtualTradesTable(trades = []) {
   if (!rows.length) return `<section class="panel empty">暂无虚拟交易记录。机会分达到策略阈值后会自动执行模拟买卖。</section>`;
   return `
     <div class="responsive-table virtual-table virtual-record-table">
-      <table>
+      <table class="table">
         <thead>
           <tr>
             <th>时间</th>
@@ -4691,24 +4735,18 @@ function activeFullscreenStockChart() {
   return state.fullscreenStockChartData || state.modalStock || null;
 }
 
-function openVirtualBacktestFullscreenChart(code = "") {
+function openVirtualBacktestFullscreenChart(code = "", source = "") {
   const clean = String(code || "").trim();
-  const chart = (state.virtualTrading?.lastBacktest?.stockCharts || [])
+  const stock = (state.virtualTrading?.watchlist || []).find((item) => String(item.code || "").trim() === clean);
+  let chart = source === "virtual-pool" && stock ? virtualStockPoolChartData(stock) : null;
+  if (!chart) chart = (state.virtualTrading?.lastBacktest?.stockCharts || [])
     .find((item) => String(item.stock?.code || "").trim() === clean);
+  if (!chart && stock) chart = virtualStockPoolChartData(stock);
   if (!chart) {
     showToast("未找到这只股票的模拟交易图表数据");
     return;
   }
-  const rows = (chart.rows || [])
-    .filter((row) => ["open", "close", "high", "low"].every((key) => Number.isFinite(Number(row[key]))))
-    .map((row) => ({
-      day: row.day,
-      open: Number(row.open),
-      close: Number(row.close),
-      high: Number(row.high),
-      low: Number(row.low),
-      volume: Number(row.volume || 0)
-    }));
+  const rows = normalizeVirtualChartRows(chart.rows || []);
   if (rows.length < 2) {
     showToast("K线不足，暂时无法全屏查看");
     return;
@@ -4719,7 +4757,8 @@ function openVirtualBacktestFullscreenChart(code = "") {
     fullscreenStockChart: true,
     fullscreenStockChartData: {
       ...(chart.stock || {}),
-      candles: rows
+      candles: rows,
+      simulationTrades: (chart.trades || []).filter((item) => item && Number.isFinite(Number(item.price)))
     }
   });
 }
@@ -5109,6 +5148,14 @@ function stockChartLegend({ includeSimulation = false } = {}) {
 function stockSimulationTrades(code = "") {
   const clean = String(code || "").trim();
   if (!clean) return [];
+  const fullscreenTrades = state.fullscreenStockChartData && String(state.fullscreenStockChartData.code || "").trim() === clean
+    ? state.fullscreenStockChartData.simulationTrades
+    : null;
+  if (Array.isArray(fullscreenTrades)) {
+    return fullscreenTrades
+      .filter((item) => item && Number.isFinite(Number(item.price)))
+      .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+  }
   const backtestChart = (state.virtualTrading?.lastBacktest?.stockCharts || [])
     .find((item) => String(item.stock?.code || "").trim() === clean);
   const backtestTrades = backtestChart?.trades || [];
@@ -5712,7 +5759,7 @@ function updateStockChartTip(tip, pointer, candle, price, boll, sar, bullGate, m
         <span class="${trade.side === "buy" ? "buy" : "sell"}">
           <b>${trade.side === "buy" ? "买入" : "卖出"}</b>
           <em>${fmt(trade.price)}</em>
-          <small>${fmt(trade.qty, 0)}股 · ${money(trade.amount)}</small>
+          <small>${fmt(trade.qty, 0)}股 · ${moneyFixed2(trade.amount)}</small>
         </span>
       `).join("")}</div>`
     : `<span>模拟交易 无</span>`;
@@ -5961,7 +6008,7 @@ app.addEventListener("click", (event) => {
   }
   const virtualBacktestChart = event.target.closest("[data-action='open-virtual-backtest-chart']");
   if (virtualBacktestChart) {
-    runButtonAction(virtualBacktestChart, "打开模拟交易图表", () => openVirtualBacktestFullscreenChart(virtualBacktestChart.dataset.stockCode));
+    runButtonAction(virtualBacktestChart, "打开模拟交易图表", () => openVirtualBacktestFullscreenChart(virtualBacktestChart.dataset.stockCode, virtualBacktestChart.dataset.chartSource || ""));
     return;
   }
   const showVirtualStrategy = event.target.closest("[data-action='show-virtual-stock-strategy']");
@@ -6469,5 +6516,5 @@ setInterval(() => {
   if (isAppAuthenticated() && state.page === "tracking") loadTracking({ force: true, silent: true });
 }, recommendRefreshMs);
 setInterval(() => {
-  if (isAppAuthenticated() && state.page === "virtual") loadVirtualTrading({ force: true, silent: true });
+  if (isAppAuthenticated() && state.page === "virtual" && isAshareTradingAutoRefreshTime()) loadVirtualTrading({ force: true, silent: true });
 }, 10 * 60_000);

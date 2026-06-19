@@ -10,6 +10,7 @@ const symbols = require("../src/server/market/symbols.js");
 const indicators = require("../src/server/market/indicators.js");
 const aiClient = require("../src/server/ai/kimiClient.js");
 const time = require("../src/server/utils/time.js");
+const virtualTradingJob = require("../src/server/jobs/virtualTradingJob.js");
 
 function candlesFromCloses(closes, { volume = 1000, bullish = true } = {}) {
   return closes.map((close, index) => {
@@ -101,6 +102,31 @@ describe("A-share trading time", () => {
     assert.equal(time.isAshareTradingAutoRefreshTime(new Date("2026-06-18T03:31:00.000Z")), false);
     assert.equal(time.isAshareTradingAutoRefreshTime(new Date("2026-06-18T05:00:00.000Z")), true);
     assert.equal(time.isAshareTradingAutoRefreshTime(new Date("2026-06-20T02:00:00.000Z")), false);
+  });
+
+  it("prevents virtual trading refresh outside trading hours even when forced", async () => {
+    let runs = 0;
+    const closedJob = virtualTradingJob.createVirtualTradingJob({
+      isAshareTradingAutoRefreshTime: () => false,
+      runVirtualTradingCycle: async () => {
+        runs += 1;
+        return { cycle: { signals: [] } };
+      }
+    });
+    const skipped = await closedJob.refreshVirtualTrading({ reason: "manual", force: true });
+    assert.equal(skipped.skipped, true);
+    assert.equal(runs, 0);
+
+    const openJob = virtualTradingJob.createVirtualTradingJob({
+      isAshareTradingAutoRefreshTime: () => true,
+      runVirtualTradingCycle: async () => {
+        runs += 1;
+        return { cycle: { signals: [] } };
+      }
+    });
+    const result = await openJob.refreshVirtualTrading({ reason: "schedule" });
+    assert.equal(result.cycle.signals.length, 0);
+    assert.equal(runs, 1);
   });
 });
 
