@@ -17,6 +17,7 @@ let advisorStreamRunId = 0;
 let advisorDeferredRender = false;
 let advisorScrollRunId = 0;
 let portfolioTextDeferredRender = false;
+let trackingSearchRunId = 0;
 const advisorWelcomeMessage = { role: "assistant", content: "说股票或板块，直接给我代码/名称和你的持仓情况。我会按偏激进短线思路给结论、价位和风控。" };
 const advisorHistoryStorageKey = "guanlanAdvisorMessages:v1";
 const advisorDeepThinkingStorageKey = "guanlanAdvisorDeepThinking:v1";
@@ -67,6 +68,8 @@ const state = {
   trackingRows: [],
   trackingUpdatedAt: "",
   trackingLoading: false,
+  trackingSearchLoading: false,
+  trackingSearchResults: [],
   trackingNews: {},
   trackingNewsLoading: {},
   trackingSearch: "",
@@ -140,9 +143,9 @@ const cnMarketClosedDates2026 = new Set([
 function defaultBacktestRange() {
   const end = new Date();
   const start = new Date(end);
-  const originalMonth = start.getMonth();
-  start.setFullYear(start.getFullYear() - 1);
-  if (start.getMonth() !== originalMonth) start.setDate(0);
+  const targetMonth = (start.getMonth() + 12 - 6) % 12;
+  start.setMonth(start.getMonth() - 6);
+  if (start.getMonth() !== targetMonth) start.setDate(0);
   const format = (date) => {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -153,6 +156,32 @@ function defaultBacktestRange() {
     start: format(start),
     end: format(end)
   };
+}
+
+function normalizeDateInputValue(value = "") {
+  const text = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+}
+
+function updateVirtualBacktestDate(which = "", value = "") {
+  const defaults = defaultBacktestRange();
+  let start = normalizeDateInputValue(state.virtualBacktestStart) || defaults.start;
+  let end = normalizeDateInputValue(state.virtualBacktestEnd) || defaults.end;
+  const next = normalizeDateInputValue(value);
+  if (!next) return;
+  if (which === "start") start = next;
+  if (which === "end") end = next;
+  if (start > end) {
+    if (which === "start") end = start;
+    else start = end;
+  }
+  if (end > defaults.end) end = defaults.end;
+  if (start > end) start = end;
+  update({
+    virtualBacktestStart: start,
+    virtualBacktestEnd: end,
+    virtualTradingError: ""
+  });
 }
 let sectorStockIndexQueueRunning = false;
 let pendingAutoRefresh = new Set();
@@ -165,6 +194,7 @@ const pageScrollMemory = new Map();
 const icons = {
   home: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/></svg>`,
   radar: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4"/><path d="M12 18v4"/><path d="m4.93 4.93 2.83 2.83"/><path d="m16.24 16.24 2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><circle cx="12" cy="12" r="4"/></svg>`,
+  trade: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M7 15l3-3 3 2 5-7"/><path d="M16 7h2v2"/><path d="M8 19v-3"/><path d="M13 19v-5"/><path d="M18 19v-8"/></svg>`,
   list: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>`,
   close: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`,
   refresh: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-15-6.7L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 15 6.7l3-2.7"/><path d="M21 21v-5h-5"/></svg>`,
@@ -1588,6 +1618,64 @@ async function removeTrackingStock(code) {
   }
 }
 
+function renderTrackingSearchPreservingFocus(value = state.trackingSearch, cursor = String(value || "").length) {
+  render();
+  requestAnimationFrame(() => {
+    const input = document.querySelector("[data-tracking-search]");
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    const nextCursor = Math.min(Number(cursor) || 0, input.value.length);
+    input.setSelectionRange(nextCursor, nextCursor);
+  });
+}
+
+async function searchTrackingMarket(keyword = state.trackingSearch) {
+  const query = String(keyword || "").trim();
+  if (!query) {
+    update({ trackingSearchResults: [], trackingSearchLoading: false });
+    return;
+  }
+  const runId = ++trackingSearchRunId;
+  update({ trackingSearchLoading: true });
+  try {
+    const json = await api(`/api/stocks/search?q=${encodeURIComponent(query)}`);
+    if (runId !== trackingSearchRunId) return;
+    update({
+      trackingSearchResults: Array.isArray(json.data) ? json.data : [],
+      trackingSearchLoading: false
+    });
+  } catch (error) {
+    if (runId !== trackingSearchRunId) return;
+    update({ trackingSearchResults: [], trackingSearchLoading: false, error: error.message });
+  }
+}
+
+async function addSearchResultToTracking(code = "") {
+  const clean = String(code || "").trim();
+  const stock = (state.trackingSearchResults || []).find((item) => String(item.code || "").trim() === clean);
+  if (!stock?.code) return;
+  update({ trackingLoading: true, error: "" });
+  try {
+    const json = await api("/api/tracking", {
+      method: "POST",
+      body: JSON.stringify({ code: stock.code, name: stock.name, market: stock.market })
+    });
+    const store = json.data || {};
+    const stocks = store.stocks || [];
+    update({
+      trackingRows: stocks,
+      trackingUpdatedAt: store.updatedAt || json.updatedAt || state.trackingUpdatedAt,
+      trackingLoading: false,
+      trackingSearchResults: [],
+      updatedAt: json.updatedAt || state.updatedAt
+    });
+    loadTrackingNews(stocks);
+    showToast(`已加入追踪：${stock.name || stock.code}`);
+  } catch (error) {
+    update({ trackingLoading: false, error: error.message });
+  }
+}
+
 async function loadVirtualTrading({ force = false, silent = false } = {}) {
   if (!silent) update({ virtualTradingLoading: true, virtualTradingError: "", error: "" });
   try {
@@ -2295,7 +2383,7 @@ function shell(content) {
           ${navButton("recommend", "股票推荐", icons.home)}
           ${navButton("portfolio", "我的持股", icons.list)}
           ${navButton("tracking", "股票追踪", icons.radar)}
-          ${navButton("virtual", "虚拟交易", icons.radar)}
+          ${navButton("virtual", "虚拟交易", icons.trade)}
           ${navButton("discussion", "个股讨论", icons.chat)}
           ${navButton("settings", "设置", icons.settings)}
         </nav>
@@ -2780,15 +2868,12 @@ function recommendPage() {
 const trackingPageSize = 6;
 
 function trackingPageInfo(rows = state.trackingRows || []) {
-  const keyword = normalizeSearchText(state.trackingSearch);
-  const filtered = keyword
-    ? rows.filter((stock) => normalizeSearchText(`${stock.name || ""} ${stock.code || ""}`).includes(keyword))
-    : rows;
+  const filtered = rows;
   const pageCount = Math.max(1, Math.ceil(filtered.length / trackingPageSize));
   const current = Math.min(Math.max(1, Number(state.trackingPageNo) || 1), pageCount);
   const start = (current - 1) * trackingPageSize;
   return {
-    keyword,
+    keyword: "",
     total: rows.length,
     filtered,
     pageCount,
@@ -2800,24 +2885,62 @@ function trackingPageInfo(rows = state.trackingRows || []) {
 function trackingPage() {
   const rows = state.trackingRows || [];
   const pageInfo = trackingPageInfo(rows);
+  const searchResults = state.trackingSearchResults || [];
   return `
     <section class="portfolio-action-bar tracking-action-bar">
       <div>
         <strong>追踪池</strong>
-        <span>${state.trackingUpdatedAt ? `最近采样 ${new Date(state.trackingUpdatedAt).toLocaleString("zh-CN")}` : "每 15 分钟采集一次价格与成交量"} · ${fmt(pageInfo.filtered.length, 0)}/${fmt(pageInfo.total, 0)}只</span>
+        <span>${state.trackingUpdatedAt ? `最近采样 ${new Date(state.trackingUpdatedAt).toLocaleString("zh-CN")}` : "每 15 分钟采集一次价格与成交量"} · 已追踪 ${fmt(pageInfo.total, 0)}只</span>
       </div>
       <div class="controls">
-        <input class="tracking-search-input" data-tracking-search value="${escapeHtml(state.trackingSearch || "")}" placeholder="搜索已追踪股票/代码" autocomplete="off" />
+        <input class="tracking-search-input" data-tracking-search value="${escapeHtml(state.trackingSearch || "")}" placeholder="搜索全A股股票名称/代码" autocomplete="off" />
+        <button class="ghost" data-action="submit-tracking-search" ${state.trackingSearchLoading ? "disabled" : ""}>${state.trackingSearchLoading ? "搜索中" : "搜索"}</button>
         ${state.trackingSearch ? `<button class="ghost" data-action="clear-tracking-search">清空</button>` : ""}
         <button class="ghost" data-action="refresh-tracking" ${state.trackingLoading ? "disabled" : ""}>${icons.refresh}${state.trackingLoading ? "刷新中" : "立即采样"}</button>
       </div>
     </section>
+    ${trackingSearchResultsView(searchResults, rows)}
     ${state.trackingLoading && !rows.length ? loadingView() : rows.length ? pageInfo.items.length ? `
       <section class="tracking-grid">
         ${pageInfo.items.map((stock) => trackingCard(stock)).join("")}
       </section>
       ${trackingPager(pageInfo)}
-    ` : `<section class="panel empty">没有匹配「${escapeHtml(state.trackingSearch)}」的追踪股票。</section>` : `<section class="panel empty">还没有追踪股票。打开股票详情，在“加入讨论”旁边点击“加入追踪”。</section>`}
+    ` : `<section class="panel empty">当前页没有追踪股票。</section>` : `<section class="panel empty">还没有追踪股票。可以在上方搜索全A股并加入追踪。</section>`}
+  `;
+}
+
+function trackingSearchResultsView(results = [], trackedRows = []) {
+  const keyword = String(state.trackingSearch || "").trim();
+  if (!keyword) return "";
+  const tracked = new Set((trackedRows || []).map((item) => String(item.code || "").trim()));
+  if (state.trackingSearchLoading) {
+    return `<section class="panel tracking-search-panel"><span class="muted">正在全A股搜索「${escapeHtml(keyword)}」...</span></section>`;
+  }
+  if (!results.length) {
+    return `<section class="panel tracking-search-panel"><span class="muted">没有找到「${escapeHtml(keyword)}」对应的A股股票，可以尝试输入完整代码或简称。</span></section>`;
+  }
+  return `
+    <section class="panel tracking-search-panel">
+      <div class="tracking-search-head">
+        <strong>全A股搜索结果</strong>
+        <span>${fmt(results.length, 0)} 个候选</span>
+      </div>
+      <div class="tracking-search-results">
+        ${results.map((stock) => {
+          const code = String(stock.code || "").trim();
+          const added = tracked.has(code);
+          return `
+            <div class="tracking-search-result">
+              <button class="tracking-search-stock" data-stock="${escapeHtml(code)}">
+                <strong>${escapeHtml(stock.name || code)}</strong>
+                <span>${escapeHtml(code)} · ${Number(stock.market) === 1 ? "沪市" : "深/北市"}</span>
+              </button>
+              <button class="ghost" data-action="add-search-tracking" data-tracking-code="${escapeHtml(code)}" ${added || state.trackingLoading ? "disabled" : ""}>${added ? "已追踪" : "加入追踪"}</button>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </section>
   `;
 }
 
@@ -3027,7 +3150,7 @@ function virtualBacktestPage(data = {}) {
   return `
     <section class="panel virtual-backtest-panel">
       <div class="panel-head">
-        <div><strong>策略优化</strong><small>默认使用今天往前一个自然年的真实K线，独立评估并优化策略，不污染当前虚拟账户</small></div>
+        <div><strong>策略优化</strong><small>默认使用最近6个月真实K线，独立评估并优化策略，不污染当前虚拟账户</small></div>
       </div>
       <div class="virtual-backtest-controls">
         <label><span>开始日期</span><input type="date" data-virtual-backtest-start value="${escapeHtml(backtestStart)}" max="${escapeHtml(backtestEnd)}" /></label>
@@ -5779,7 +5902,14 @@ app.addEventListener("click", (event) => {
     return;
   }
   if (event.target.closest("[data-action='clear-tracking-search']")) {
-    runButtonAction(event.target, "清空追踪搜索", () => update({ trackingSearch: "", trackingPageNo: 1 }), { successToast: true });
+    runButtonAction(event.target, "清空追踪搜索", () => update({ trackingSearch: "", trackingSearchResults: [], trackingSearchLoading: false }), { successToast: true });
+    return;
+  }
+  if (event.target.closest("[data-action='submit-tracking-search']")) {
+    runButtonAction(event.target, "搜索追踪股票", () => {
+      if (state.trackingSearchComposing) return { cancelled: true };
+      return searchTrackingMarket(state.trackingSearch);
+    });
     return;
   }
   if (event.target.closest("[data-action='submit-sector-search']")) {
@@ -5802,6 +5932,11 @@ app.addEventListener("click", (event) => {
   }
   if (event.target.closest("[data-action='add-stock-tracking']")) {
     runButtonAction(event.target, "加入追踪", () => addModalStockToTracking());
+    return;
+  }
+  const addSearchTracking = event.target.closest("[data-action='add-search-tracking']");
+  if (addSearchTracking) {
+    runButtonAction(addSearchTracking, "加入追踪", () => addSearchResultToTracking(addSearchTracking.dataset.trackingCode));
     return;
   }
   if (event.target.closest("[data-action='add-virtual-trading']")) {
@@ -6098,6 +6233,12 @@ app.addEventListener("change", (event) => {
   if (event.target.matches("[data-position-image]") && event.target.files?.[0]) {
     recognizePositionImage(event.target.files[0]);
   }
+  if (event.target.matches("[data-virtual-backtest-start]")) {
+    updateVirtualBacktestDate("start", event.target.value);
+  }
+  if (event.target.matches("[data-virtual-backtest-end]")) {
+    updateVirtualBacktestDate("end", event.target.value);
+  }
   if (event.target.matches("[data-setting]")) {
     const key = event.target.dataset.setting;
     const value = event.target.type === "checkbox" ? event.target.checked : event.target.value;
@@ -6135,27 +6276,16 @@ app.addEventListener("input", (event) => {
   if (event.target.matches("[data-tracking-search]")) {
     const value = event.target.value;
     state.trackingSearch = value;
-    if (event.isComposing || state.trackingSearchComposing) return;
+    state.trackingSearchResults = [];
+    state.trackingSearchLoading = false;
+    if (event.isComposing || state.trackingSearchComposing) {
+      return;
+    }
     const cursor = event.target.selectionStart ?? value.length;
-    state.trackingPageNo = 1;
-    render();
-    requestAnimationFrame(() => {
-      const input = document.querySelector("[data-tracking-search]");
-      if (!input) return;
-      input.focus();
-      input.setSelectionRange(cursor, cursor);
-    });
+    renderTrackingSearchPreservingFocus(value, cursor);
   }
   if (event.target.matches("[data-virtual-capital]")) {
     state.virtualTradingInitAmount = event.target.value;
-    state.virtualTradingError = "";
-  }
-  if (event.target.matches("[data-virtual-backtest-start]")) {
-    state.virtualBacktestStart = event.target.value;
-    state.virtualTradingError = "";
-  }
-  if (event.target.matches("[data-virtual-backtest-end]")) {
-    state.virtualBacktestEnd = event.target.value;
     state.virtualTradingError = "";
   }
   if (event.target.matches("[data-virtual-stock-strategy]")) {
@@ -6221,14 +6351,9 @@ app.addEventListener("compositionend", (event) => {
     const cursor = event.target.selectionStart ?? value.length;
     state.trackingSearchComposing = false;
     state.trackingSearch = value;
-    state.trackingPageNo = 1;
-    render();
-    requestAnimationFrame(() => {
-      const input = document.querySelector("[data-tracking-search]");
-      if (!input) return;
-      input.focus();
-      input.setSelectionRange(cursor, cursor);
-    });
+    state.trackingSearchResults = [];
+    state.trackingSearchLoading = false;
+    renderTrackingSearchPreservingFocus(value, cursor);
   }
 });
 
@@ -6247,6 +6372,7 @@ app.addEventListener("keydown", (event) => {
   if (event.target.matches("[data-tracking-search]") && event.key === "Enter") {
     if (event.isComposing || state.trackingSearchComposing) return;
     event.preventDefault();
+    searchTrackingMarket(event.target.value);
   }
   if (event.target.matches("[data-virtual-capital]") && event.key === "Enter") {
     event.preventDefault();

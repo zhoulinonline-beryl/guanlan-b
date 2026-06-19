@@ -1121,6 +1121,52 @@ async function searchStockByName(name = "") {
   }
 }
 
+async function searchStocksByKeyword(keyword = "") {
+  const text = String(keyword || "").trim();
+  if (!text) return [];
+  const cached = cacheGet(`stock-search-list:${text}`, 24 * 60 * 60 * 1000);
+  if (cached) return cached;
+  const codeMatch = text.match(/([036489]\d{5})/);
+  if (codeMatch) {
+    const code = codeMatch[1];
+    let name = code;
+    try {
+      const quote = await getQuote(code, marketOf(code));
+      name = quote.name || name;
+    } catch {
+      // 搜索结果不依赖实时行情，失败时仍返回代码候选。
+    }
+    return cacheSet(`stock-search-list:${text}`, [{ code, name, market: marketOf(code) }]);
+  }
+  const url = eastmoneyUrl("searchapi.eastmoney.com", "/api/suggest/get", {
+    input: text,
+    type: "14",
+    token: "D43BF722C8E33BD2B09D446BC79F0784",
+    count: "12"
+  });
+  try {
+    const json = await fetchJson(url);
+    const rows = json?.QuotationCodeTable?.Data || json?.data || [];
+    const seen = new Set();
+    const results = rows
+      .map((row) => {
+        const code = String(row.Code || row.code || "").trim();
+        if (!/^(0|3|6|4|8|9)\d{5}$/.test(code) || seen.has(code)) return null;
+        seen.add(code);
+        return {
+          code,
+          name: String(row.Name || row.name || code).trim(),
+          market: marketOf(code)
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 10);
+    return cacheSet(`stock-search-list:${text}`, results);
+  } catch {
+    return [];
+  }
+}
+
 async function enrichParsedHoldings(holdings = []) {
   const byKey = new Map();
   for (const item of holdings.map(normalizeHolding)) {
@@ -1563,6 +1609,7 @@ const handleApi = createApiRouter({
   refreshRecommendations,
   getSectorNewsBatch,
   getQuote,
+  searchStocksByKeyword,
   marketOf,
   updateMarketSnapshot,
   snapshotFallback,
