@@ -113,6 +113,49 @@ describe("virtual trading store", () => {
 });
 
 describe("virtual trading service", () => {
+  it("enriches legacy virtual stocks with latest backtest chart rows for pool charts", () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "guanlan-virtual-chart-"));
+    try {
+      const store = loadVirtualStoreWithDataDir(dataDir);
+      const serviceModule = require("../src/server/virtualTrading/virtualTradingService.js");
+      const candles = bullishCandles();
+      store.writeVirtualTradingStore({
+        ...store.readVirtualTradingStore(),
+        account: { initialCapital: 100000, cash: 100000, enabled: true },
+        watchlist: [{ code: "600000", name: "浦发银行", market: 1, klines: [] }],
+        lastBacktest: {
+          id: "legacy_chart",
+          startDate: "2026-06-01",
+          endDate: "2026-06-30",
+          initialCapital: 100000,
+          finalEquity: 100000,
+          stockCharts: [{
+            stock: { code: "600000", name: "浦发银行", market: 1 },
+            rows: candles,
+            trades: []
+          }]
+        }
+      });
+      const service = serviceModule.createVirtualTradingService({
+        readVirtualTradingStore: store.readVirtualTradingStore,
+        writeVirtualTradingStore: store.writeVirtualTradingStore,
+        saveVirtualStockStrategies: store.saveVirtualStockStrategies,
+        addVirtualTradingStock: store.addVirtualTradingStock,
+        removeVirtualTradingStock: store.removeVirtualTradingStock,
+        initVirtualTradingAccount: store.initVirtualTradingAccount,
+        setVirtualTradingEnabled: store.setVirtualTradingEnabled,
+        marketOf: () => 1
+      });
+      const snapshot = service.snapshot();
+      assert.equal(snapshot.watchlist.length, 1);
+      assert.ok(snapshot.watchlist[0].klines.length > 1);
+      assert.equal(snapshot.watchlist[0].klines.at(-1).day, candles.at(-1).day);
+    } finally {
+      delete process.env.GUANLAN_DATA_DIR;
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("applies A-share trading rules for T+1, board lots, and price limits", () => {
     const serviceModule = require("../src/server/virtualTrading/virtualTradingService.js");
     const strategy = {
@@ -247,6 +290,7 @@ describe("virtual trading service", () => {
       assert.equal(afterAdd.stockStrategies[0].code, "600000");
       assert.match(afterAdd.stockStrategies[0].summary, /最近一年策略优化|策略优化/);
       assert.equal(Number.isFinite(Number(afterAdd.stockStrategies[0].strategy.buyThreshold)), true);
+      assert.ok(afterAdd.watchlist[0].klines.length > 1);
       const result = await service.runCycle({ reason: "test", force: true });
       assert.equal(result.summary.initialized, true);
       assert.equal(result.positions.length, 1);
@@ -254,6 +298,7 @@ describe("virtual trading service", () => {
       assert.equal(result.trades[0].side, "buy");
       assert.ok(result.summary.cash < 100000);
       assert.ok(result.strategy.note);
+      assert.ok(result.watchlist[0].klines.length > 1);
     } finally {
       delete process.env.GUANLAN_DATA_DIR;
       fs.rmSync(dataDir, { recursive: true, force: true });

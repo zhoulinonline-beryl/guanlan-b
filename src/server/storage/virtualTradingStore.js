@@ -74,6 +74,7 @@ function normalizeVirtualStock(item = {}) {
     lastPrice: finiteNumber(item.lastPrice, 0),
     lastPct: Number.isFinite(Number(item.lastPct)) ? Number(item.lastPct) : null,
     lastUpdatedAt: item.lastUpdatedAt || "",
+    klines: Array.isArray(item.klines) ? item.klines.map(normalizeTrackingLikeKline).filter(Boolean).slice(-160) : [],
     lastSignal: item.lastSignal || null
   };
 }

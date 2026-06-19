@@ -6,7 +6,7 @@ function createVirtualTradingJob({
   let inFlight = null;
 
   async function refreshVirtualTrading({ reason = "schedule", force = false } = {}) {
-    if (!force && isAshareTradingAutoRefreshTime && !isAshareTradingAutoRefreshTime()) {
+    if (isAshareTradingAutoRefreshTime && !isAshareTradingAutoRefreshTime()) {
       return { skipped: true, reason, message: "非A股交易自动刷新时段" };
     }
     if (inFlight) {

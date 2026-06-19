@@ -24,6 +24,13 @@ function normalizeCandles(rows = []) {
   }).filter(Boolean);
 }
 
+function compactChartRows(rows = [], limit = 160) {
+  return normalizeCandles(rows)
+    .map((row) => ({ ...row, day: normalizeDateText(row.day) || row.day }))
+    .filter((row) => row.day)
+    .slice(-limit);
+}
+
 function normalizeDateText(value = "") {
   const text = String(value || "").trim();
   const match = text.match(/(\d{4})[-/]?(\d{2})[-/]?(\d{2})/);
@@ -421,12 +428,20 @@ function createVirtualTradingService({
 }) {
   function snapshot() {
     const store = readVirtualTradingStore();
+    const chartRowsByCode = new Map((store.lastBacktest?.stockCharts || [])
+      .map((chart) => [String(chart.stock?.code || "").trim(), compactChartRows(chart.rows || [])]));
+    const watchlist = (store.watchlist || []).map((stock) => {
+      if (Array.isArray(stock.klines) && stock.klines.length >= 2) return stock;
+      const fallbackRows = chartRowsByCode.get(String(stock.code || "").trim()) || [];
+      return fallbackRows.length >= 2 ? { ...stock, klines: fallbackRows } : stock;
+    });
     const cash = finite(store.account?.cash);
     const positionValue = store.positions.reduce((sum, item) => sum + finite(item.marketValue), 0);
     const equity = cash + positionValue;
     const initial = finite(store.account?.initialCapital);
     return {
       ...store,
+      watchlist,
       summary: {
         initialized: Boolean(store.account),
         enabled: Boolean(store.account?.enabled),
@@ -475,6 +490,14 @@ function createVirtualTradingService({
       summary: `${item.name || code} 已基于最近一年策略优化生成交易策略。${item.basis?.candidateName ? ` 候选：${item.basis.candidateName}。` : ""}`
     }));
     const { saved } = saveVirtualStockStrategies(enriched, { source: "add-stock-history-replay" });
+    const refreshed = readVirtualTradingStore();
+    writeVirtualTradingStore({
+      ...refreshed,
+      watchlist: (refreshed.watchlist || []).map((item) => item.code === code ? {
+        ...item,
+        klines: compactChartRows(rows)
+      } : item)
+    });
     return saved[0] || null;
   }
 
@@ -527,6 +550,7 @@ function createVirtualTradingService({
           lastPrice: signal.price,
           lastPct: quote.pct ?? signal.changePct,
           lastUpdatedAt: now,
+          klines: compactChartRows(candles.length ? candles : stock.klines),
           lastSignal: signal
         };
         watchlist.push(nextStock);
