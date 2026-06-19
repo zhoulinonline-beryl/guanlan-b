@@ -2,7 +2,7 @@ const { RECOMMEND_REFRESH_MS } = require("../config");
 const { moneyText, toFixedText } = require("../utils/number");
 const { technicalOpportunityScore } = require("../market/indicators");
 
-function createRecommendationService({ getSectors, getStocks, getStockKline, stockAdviceForServer }) {
+function createRecommendationService({ getSectors, getStocks, getStockKline, stockAdviceForServer, getSavedStockStrategy }) {
   const recommendationCache = {
     status: "idle",
     data: [],
@@ -42,21 +42,27 @@ function createRecommendationService({ getSectors, getStocks, getStockKline, sto
     return flowOk && ratioOk && speedOk;
   }
 
-  function buildServerRecommendationReason(stock, advice) {
+  function buildServerRecommendationReason(stock, advice, savedStrategy = null) {
     const flow = stock.mainFlow === null || stock.mainFlow === undefined ? "暂无主力净额" : `主力净额 ${moneyText(stock.mainFlow)}`;
     const flowPct = stock.mainFlowPct === null || stock.mainFlowPct === undefined ? "" : `，主力占比 ${toFixedText(stock.mainFlowPct)}%`;
     const speed = stock.mainInSpeed === null || stock.mainInSpeed === undefined ? "" : `，流入速度 ${toFixedText(stock.mainInSpeed)}%`;
-    return `${stock.sectorName} 板块雷达分 ${toFixedText(stock.sectorScore, 1)}，${flow}${flowPct}${speed}；个股进攻分 ${toFixedText(stock.score, 1)}，当前涨跌幅 ${toFixedText(stock.pct)}%，属于可跟踪但不宜盲目追高的位置。`;
+    const strategyText = savedStrategy ? `；已应用历史模拟单股策略：${savedStrategy.summary || "策略参数已保存"}` : "";
+    return `${stock.sectorName} 板块雷达分 ${toFixedText(stock.sectorScore, 1)}，${flow}${flowPct}${speed}；个股进攻分 ${toFixedText(stock.score, 1)}，当前涨跌幅 ${toFixedText(stock.pct)}%，属于可跟踪但不宜盲目追高的位置${strategyText}。`;
   }
 
-  function buildServerRecommendationAnalysis(stock, advice) {
+  function buildServerRecommendationAnalysis(stock, advice, savedStrategy = null) {
     const levels = advice.levels || {};
-    return [
+    const lines = [
       `方向：${stock.sectorName} 板块主力方向靠前，个股资金同步性 ${Number(stock.mainFlow || 0) > 0 ? "偏强" : "一般"}。`,
       `买点：优先等回踩 ${toFixedText(levels.pullbackBuy)} 附近不破，或放量突破 ${toFixedText(levels.breakoutBuy)} 后分批，不建议单笔满仓追入。`,
       `风控：计划止损 ${toFixedText(levels.stopLoss)}，若主力净流入转负或跌破该位置，本次建仓逻辑失效。`,
       `目标：第一目标 ${toFixedText(levels.firstTarget)}，到位先锁定部分利润，再看板块持续性。`
     ];
+    if (savedStrategy?.strategy) {
+      const s = savedStrategy.strategy;
+      lines.push(`单股策略：历史模拟已保存 MACD ${toFixedText(s.macdWeight, 2)} / SAR ${toFixedText(s.sarWeight, 2)} / BOLL ${toFixedText(s.bollWeight, 2)} / 牛门线 ${toFixedText(s.bullGateWeight, 2)} 权重；止盈 ${toFixedText(s.takeProfitPct, 1)}%，止损 ${toFixedText(s.stopLossPct, 1)}%。`);
+    }
+    return lines;
   }
 
   async function refreshRecommendations({ force = false } = {}) {
@@ -105,9 +111,11 @@ function createRecommendationService({ getSectors, getStocks, getStockKline, sto
         }
         const advised = { ...stock, candles };
         const advice = stockAdviceForServer(advised);
+        const savedStrategy = typeof getSavedStockStrategy === "function" ? getSavedStockStrategy(stock.code) : null;
         const actionBoost = advice.action === "持有或小幅加仓" ? 8 : advice.action === "观察减仓" ? -7 : advice.action === "冲高减仓" ? -15 : 0;
+        const savedStrategyBoost = savedStrategy ? 4 : 0;
         const technical = technicalOpportunityScore(candles);
-        const buyOpportunityScore = Number(stock.recScore || 0) + actionBoost + technical.score;
+        const buyOpportunityScore = Number(stock.recScore || 0) + actionBoost + technical.score + savedStrategyBoost;
         return {
           ...stock,
           candles: [],
@@ -118,10 +126,15 @@ function createRecommendationService({ getSectors, getStocks, getStockKline, sto
             sar: technical.sarLabel,
             details: technical.details
           },
+          savedStrategy: savedStrategy ? {
+            summary: savedStrategy.summary,
+            appliedAt: savedStrategy.appliedAt,
+            strategy: savedStrategy.strategy
+          } : null,
           recScore: buyOpportunityScore,
           buyOpportunityScore,
-          reason: buildServerRecommendationReason(stock, advice),
-          analysis: buildServerRecommendationAnalysis(stock, advice).concat([
+          reason: buildServerRecommendationReason(stock, advice, savedStrategy),
+          analysis: buildServerRecommendationAnalysis(stock, advice, savedStrategy).concat([
             `技术：${technical.macdLabel}，${technical.sarLabel}，对买入机会分贡献 ${technical.score >= 0 ? "+" : ""}${toFixedText(technical.score, 1)} 分。`
           ])
         };

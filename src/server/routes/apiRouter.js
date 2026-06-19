@@ -43,7 +43,17 @@ function createApiRouter(deps) {
     readTrackingStore,
     removeTrackedStock,
     updateTrackingKlines,
-    refreshTrackedStocks
+    refreshTrackedStocks,
+    virtualTradingSnapshot,
+    initVirtualTradingAccount,
+    addVirtualTradingStock,
+    removeVirtualTradingStock,
+    setVirtualTradingEnabled,
+    resetVirtualTradingAccount,
+    refreshVirtualTrading,
+    runVirtualTradingBacktest,
+    applyVirtualTradingBacktestStrategies,
+    saveVirtualStockStrategy
   } = deps;
 
   function holdingsAuthStatus(req) {
@@ -244,6 +254,71 @@ function createApiRouter(deps) {
       await refreshTrackedStocks({ reason: "manual" });
       return { data: readTrackingStore() };
     }],
+    ["GET", "/api/virtual-trading", async () => ({ data: virtualTradingSnapshot() })],
+    ["POST", "/api/virtual-trading/init", async ({ req }) => {
+      const body = await readJsonBody(req);
+      initVirtualTradingAccount(body.initialCapital || body.capital);
+      return { data: virtualTradingSnapshot() };
+    }],
+    ["POST", "/api/virtual-trading/enabled", async ({ req }) => {
+      const body = await readJsonBody(req);
+      setVirtualTradingEnabled(body.enabled);
+      return { data: virtualTradingSnapshot() };
+    }],
+    ["POST", "/api/virtual-trading/stock", async ({ req }) => {
+      const body = await readJsonBody(req);
+      const code = String(body.code || "").trim();
+      if (!code) throw new Error("缺少 code 参数");
+      const market = Number.isFinite(Number(body.market)) ? Number(body.market) : marketOf(code);
+      await addVirtualTradingStock({
+        code,
+        name: body.name,
+        market
+      });
+      await refreshVirtualTrading({ reason: "add-stock", force: true }).catch(() => null);
+      return { data: virtualTradingSnapshot() };
+    }],
+    ["DELETE", "/api/virtual-trading/stock", async ({ url }) => {
+      const code = url.searchParams.get("code");
+      if (!code) throw new Error("缺少 code 参数");
+      removeVirtualTradingStock(code);
+      return { data: virtualTradingSnapshot() };
+    }],
+    ["POST", "/api/virtual-trading/refresh", async () => {
+      const data = await refreshVirtualTrading({ reason: "manual", force: true });
+      return { data: data || virtualTradingSnapshot() };
+    }],
+    ["POST", "/api/virtual-trading/reset", async ({ req }) => {
+      const body = await readJsonBody(req);
+      resetVirtualTradingAccount(body.initialCapital || body.capital || null);
+      return { data: virtualTradingSnapshot() };
+    }],
+    ["POST", "/api/virtual-trading/backtest", async ({ req }) => {
+      const body = await readJsonBody(req);
+      const data = await runVirtualTradingBacktest({
+        startDate: body.startDate,
+        endDate: body.endDate,
+        initialCapital: body.initialCapital,
+        strategyOverride: body.strategyOverride,
+        useOptimization: Boolean(body.useOptimization)
+      });
+      return { data };
+    }],
+    ["POST", "/api/virtual-trading/backtest/apply-strategies", async () => {
+      const data = await applyVirtualTradingBacktestStrategies();
+      return { data };
+    }],
+    ["POST", "/api/virtual-trading/stock-strategy", async ({ req }) => {
+      const body = await readJsonBody(req);
+      const data = await saveVirtualStockStrategy({
+        code: body.code,
+        name: body.name,
+        strategy: body.strategy,
+        summary: body.summary,
+        basis: body.basis
+      });
+      return { data };
+    }],
     ["GET", "/api/recommendations", async ({ url }) => {
       const force = url.searchParams.get("force") === "1";
       const cache = await refreshRecommendations({ force });
@@ -330,7 +405,9 @@ function createApiRouter(deps) {
       if (!code) throw new Error("缺少 code 参数");
       let data;
       try {
-        data = await getStockKline(code, Number(url.searchParams.get("market") || marketOf(code)));
+        data = await getStockKline(code, Number(url.searchParams.get("market") || marketOf(code)), {
+          count: Number(url.searchParams.get("count") || 120)
+        });
         updateMarketSnapshot("kline", code, data);
       } catch (error) {
         data = snapshotFallback("kline", code);

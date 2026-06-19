@@ -2,9 +2,14 @@ import { sectorReasons, stockAdvice } from "./analytics.js";
 
 const app = document.querySelector("#app");
 let stockChartPointer = null;
+let fullscreenStockChartPointer = null;
+let fullscreenStockChartScrollAnchor = null;
 let stockChartDrawFrame = 0;
 let trackingChartDrawFrame = 0;
 const trackingChartPointers = new Map();
+let buttonActionLock = false;
+let buttonActionName = "";
+let buttonActionSelector = "";
 let skipAdvisorFocusRestoreOnce = false;
 let advisorAbortController = null;
 let advisorStreamTimer = null;
@@ -67,6 +72,16 @@ const state = {
   trackingSearch: "",
   trackingSearchComposing: false,
   trackingPageNo: 1,
+  virtualTrading: null,
+  virtualTradingLoading: false,
+  virtualTradingInitAmount: "",
+  virtualTradingError: "",
+  virtualTradingTab: "live",
+  virtualBacktestStart: "",
+  virtualBacktestEnd: "",
+  virtualBacktestTradePages: {},
+  virtualStockStrategyDrafts: {},
+  virtualStrategyPreviewCode: "",
   advisorContexts: [],
   advisorMessages: loadAdvisorMessages(),
   advisorInput: "",
@@ -97,8 +112,10 @@ const state = {
   modalPortfolioUpdate: false,
   modalSectorId: "",
   modalStockSort: "mainFlow",
-  stockChartIndicators: { kline: true, boll: true, sar: true, bullgate: true, macd: true },
+  stockChartIndicators: { kline: true, boll: true, sar: true, bullgate: true, macd: true, simulation: true },
   modalStock: null,
+  fullscreenStockChart: false,
+  fullscreenStockChartData: null,
   modalIndex: null,
   loading: true,
   stockLoading: false,
@@ -119,6 +136,24 @@ const cnMarketClosedDates2026 = new Set([
   "2026-09-25", "2026-09-26", "2026-09-27",
   "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06", "2026-10-07"
 ]);
+
+function defaultBacktestRange() {
+  const end = new Date();
+  const start = new Date(end);
+  const originalMonth = start.getMonth();
+  start.setFullYear(start.getFullYear() - 1);
+  if (start.getMonth() !== originalMonth) start.setDate(0);
+  const format = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+  return {
+    start: format(start),
+    end: format(end)
+  };
+}
 let sectorStockIndexQueueRunning = false;
 let pendingAutoRefresh = new Set();
 let pendingScrollAnchor = null;
@@ -190,6 +225,7 @@ function startAppDataOnce() {
   appDataStarted = true;
   loadSectors();
   loadTracking({ silent: true });
+  loadVirtualTrading({ silent: true });
   loadAdminStatus();
 }
 
@@ -353,6 +389,30 @@ function restoreScrollable(anchor) {
   el.scrollLeft = clampScroll(anchor.left, el.scrollWidth - el.clientWidth);
 }
 
+function captureFullscreenChartScroll() {
+  const el = document.querySelector("#stockFullscreenChartScroll");
+  const stock = activeFullscreenStockChart();
+  if (!el || !stock) return null;
+  const maxLeft = Math.max(0, el.scrollWidth - el.clientWidth);
+  return {
+    selector: "#stockFullscreenChartScroll",
+    identity: stock.code || "",
+    left: el.scrollLeft,
+    ratio: maxLeft ? el.scrollLeft / maxLeft : 0,
+    atRight: maxLeft > 0 && maxLeft - el.scrollLeft < 4
+  };
+}
+
+function restoreFullscreenChartScroll(anchor = fullscreenStockChartScrollAnchor) {
+  if (!anchor) return;
+  const el = document.querySelector(anchor.selector || "#stockFullscreenChartScroll");
+  const stock = activeFullscreenStockChart();
+  if (!el || !stock || anchor.identity !== (stock.code || "")) return;
+  const maxLeft = Math.max(0, el.scrollWidth - el.clientWidth);
+  const target = anchor.atRight ? maxLeft : Number.isFinite(Number(anchor.ratio)) ? maxLeft * Number(anchor.ratio) : anchor.left;
+  el.scrollLeft = clampScroll(target, maxLeft);
+}
+
 function captureScrollAnchors() {
   return {
     page: state.page,
@@ -362,7 +422,8 @@ function captureScrollAnchors() {
     sector: captureScrollable("#sectorOverlay.open .drawer-body", state.modalSectorId || ""),
     index: captureScrollable("#indexOverlay.open .drawer-body", state.modalIndex?.id || ""),
     portfolioUpdate: captureScrollable("#portfolioUpdateOverlay.open .mini-dialog", state.modalPortfolioUpdate ? "open" : ""),
-    chat: captureScrollable(".chat-thread", state.page === "discussion" ? "discussion" : "")
+    chat: captureScrollable(".chat-thread", state.page === "discussion" ? "discussion" : ""),
+    fullscreenChart: captureFullscreenChartScroll()
   };
 }
 
@@ -392,6 +453,7 @@ function restoreScrollAnchors(anchor) {
     if (anchor.index?.identity === (state.modalIndex?.id || "")) restoreScrollable(anchor.index);
     if (anchor.portfolioUpdate?.identity === (state.modalPortfolioUpdate ? "open" : "")) restoreScrollable(anchor.portfolioUpdate);
     if (anchor.chat?.identity === (state.page === "discussion" ? "discussion" : "") && state.page !== "discussion") restoreScrollable(anchor.chat);
+    restoreFullscreenChartScroll(anchor.fullscreenChart);
   };
   restore();
   requestAnimationFrame(restore);
@@ -898,7 +960,7 @@ function isAshareTradingAutoRefreshTime(now = new Date()) {
   const market = chinaMarketNow(now);
   if (market.weekday === "Sat" || market.weekday === "Sun") return false;
   if (cnMarketClosedDates2026.has(market.date)) return false;
-  const inMorning = market.minutes >= 9 * 60 + 15 && market.minutes <= 11 * 60 + 30;
+  const inMorning = market.minutes >= 9 * 60 + 30 && market.minutes <= 11 * 60 + 30;
   const inAfternoon = market.minutes >= 13 * 60 && market.minutes <= 15 * 60;
   return inMorning || inAfternoon;
 }
@@ -941,6 +1003,88 @@ function showToast(message) {
   showToast.timer = setTimeout(() => toast.classList.remove("show"), 1800);
 }
 
+function buttonActionLabel(target, fallback = "当前功能") {
+  const button = target?.closest?.("button, [role='button'], [data-action]");
+  const text = String(button?.textContent || "").replace(/\s+/g, " ").trim();
+  return button?.getAttribute?.("aria-label") || button?.getAttribute?.("title") || text || fallback;
+}
+
+function cssEscape(value = "") {
+  if (window.CSS?.escape) return window.CSS.escape(String(value));
+  return String(value).replace(/["\\]/g, "\\$&");
+}
+
+function buttonActionSelectorFor(target) {
+  const button = target?.closest?.("button");
+  if (!button) return "";
+  const attrs = ["data-action", "data-page", "data-window", "data-sector-sort", "data-sector-page", "data-tracking-page", "data-virtual-tab", "data-stock-sort", "data-stock-trade-page", "data-close"];
+  for (const attr of attrs) {
+    if (button.hasAttribute(attr)) return `button[${attr}="${cssEscape(button.getAttribute(attr) || "")}"]`;
+  }
+  return "";
+}
+
+function setButtonLoading(button, loading) {
+  if (!button) return;
+  if (loading) {
+    if (!button.hasAttribute("data-loading-was-disabled")) {
+      button.setAttribute("data-loading-was-disabled", button.disabled ? "true" : "false");
+    }
+    button.classList.add("is-loading");
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.setAttribute("data-loading-label", "执行中");
+  } else {
+    const wasDisabled = button.getAttribute("data-loading-was-disabled") === "true";
+    button.classList.remove("is-loading");
+    button.removeAttribute("aria-busy");
+    button.removeAttribute("data-loading-label");
+    button.removeAttribute("data-loading-was-disabled");
+    button.disabled = wasDisabled;
+  }
+}
+
+function syncActiveButtonLoading() {
+  document.querySelectorAll("button.is-loading[aria-busy='true']").forEach((button) => setButtonLoading(button, false));
+  if (!buttonActionLock || !buttonActionSelector) return;
+  document.querySelectorAll(buttonActionSelector).forEach((button) => setButtonLoading(button, true));
+}
+
+async function runButtonAction(target, label, task, { successToast = false } = {}) {
+  const actionName = label || buttonActionLabel(target);
+  if (buttonActionLock) {
+    showToast(`正在执行：${buttonActionName || "当前功能"}，请等待完成`);
+    return;
+  }
+  const button = target?.closest?.("button");
+  const wasDisabled = Boolean(button?.disabled);
+  const previousLoadingLabel = button?.getAttribute("data-loading-label") || "";
+  buttonActionLock = true;
+  buttonActionName = actionName;
+  buttonActionSelector = buttonActionSelectorFor(target);
+  if (button) setButtonLoading(button, true);
+  showToast(`${actionName}执行中...`);
+  try {
+    const result = await task();
+    if (result?.cancelled) return;
+    if (successToast) showToast(`${actionName}已完成`);
+  } catch (error) {
+    console.error(error);
+    showToast(`${actionName}失败：${error.message || "请稍后重试"}`);
+  } finally {
+    if (button && button.isConnected) {
+      button.disabled = wasDisabled;
+      setButtonLoading(button, false);
+      if (previousLoadingLabel) button.setAttribute("data-loading-label", previousLoadingLabel);
+      else button.removeAttribute("data-loading-label");
+    }
+    buttonActionLock = false;
+    buttonActionName = "";
+    buttonActionSelector = "";
+    syncActiveButtonLoading();
+  }
+}
+
 async function copyText(value, label = "内容") {
   const text = String(value || "").trim();
   if (!text) return;
@@ -975,9 +1119,15 @@ async function copyText(value, label = "内容") {
 
 function closeTopOverlay() {
   if (state.modalPortfolioUpdate && (state.ocrLoading || state.portfolioLoading)) return;
-  if (state.modalStock) {
+  if (state.fullscreenStockChart) {
+    fullscreenStockChartPointer = null;
+    fullscreenStockChartScrollAnchor = null;
+    update({ fullscreenStockChart: false, fullscreenStockChartData: null });
+  } else if (state.modalStock) {
     stockChartPointer = null;
-    update({ modalStock: null });
+    fullscreenStockChartPointer = null;
+    fullscreenStockChartScrollAnchor = null;
+    update({ modalStock: null, fullscreenStockChartData: null });
   } else if (state.modalIndex) {
     update({ modalIndex: null });
   } else if (state.modalSectorId) {
@@ -1438,6 +1588,258 @@ async function removeTrackingStock(code) {
   }
 }
 
+async function loadVirtualTrading({ force = false, silent = false } = {}) {
+  if (!silent) update({ virtualTradingLoading: true, virtualTradingError: "", error: "" });
+  try {
+    const json = await api(force ? "/api/virtual-trading/refresh" : "/api/virtual-trading", { method: force ? "POST" : "GET" });
+    update({
+      virtualTrading: json.data || null,
+      virtualTradingLoading: false,
+      virtualTradingError: "",
+      updatedAt: json.updatedAt || state.updatedAt
+    });
+  } catch (error) {
+    update({ virtualTradingLoading: false, virtualTradingError: error.message, error: error.message });
+  }
+}
+
+async function initVirtualTrading() {
+  const amount = Number(String(state.virtualTradingInitAmount || document.querySelector("[data-virtual-capital]")?.value || "").replace(/,/g, ""));
+  if (!Number.isFinite(amount) || amount <= 0) {
+    update({ virtualTradingError: "请输入有效的虚拟满仓金额" });
+    return;
+  }
+  update({ virtualTradingLoading: true, virtualTradingError: "" });
+  try {
+    const json = await api("/api/virtual-trading/init", {
+      method: "POST",
+      body: JSON.stringify({ initialCapital: amount })
+    });
+    update({
+      virtualTrading: json.data || null,
+      virtualTradingInitAmount: "",
+      virtualTradingLoading: false,
+      virtualTradingError: ""
+    });
+    showToast("模拟交易已开始");
+  } catch (error) {
+    update({ virtualTradingLoading: false, virtualTradingError: error.message });
+  }
+}
+
+async function resetVirtualTrading() {
+  const currentAmount = Number(state.virtualTrading?.account?.initialCapital || 0);
+  const answer = window.prompt("重新模拟会清空当前持仓、成交记录和收益曲线。可在这里调整总模拟炒股金额，直接确认则沿用当前金额。", currentAmount ? fmt(currentAmount, 0) : "");
+  if (answer === null) return { cancelled: true };
+  const cleanAnswer = String(answer || "").replace(/,/g, "").trim();
+  const nextAmount = cleanAnswer ? Number(cleanAnswer) : currentAmount;
+  if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
+    update({ virtualTradingError: "请输入有效的总模拟炒股金额" });
+    return;
+  }
+  update({ virtualTradingLoading: true, virtualTradingError: "", virtualBacktestTradePages: {} });
+  try {
+    const json = await api("/api/virtual-trading/reset", {
+      method: "POST",
+      body: JSON.stringify({ initialCapital: nextAmount })
+    });
+    update({
+      virtualTrading: json.data || null,
+      virtualTradingLoading: false,
+      virtualTradingError: "",
+      virtualBacktestTradePages: {}
+    });
+    showToast("已清空旧模拟信息，重新模拟已开始");
+  } catch (error) {
+    update({ virtualTradingLoading: false, virtualTradingError: error.message });
+  }
+}
+
+async function addModalStockToVirtualTrading() {
+  const stock = state.modalStock;
+  if (!stock?.code) return;
+  update({ virtualTradingLoading: true, virtualTradingError: "" });
+  try {
+    const json = await api("/api/virtual-trading/stock", {
+      method: "POST",
+      body: JSON.stringify({
+        code: stock.code,
+        name: stock.name,
+        market: stock.market
+      })
+    });
+    update({ virtualTrading: json.data || null, virtualTradingLoading: false });
+    showToast(`已加入虚拟交易，并尝试基于最近一年策略优化生成策略：${stock.name || stock.code}`);
+  } catch (error) {
+    update({ virtualTradingLoading: false, virtualTradingError: error.message });
+  }
+}
+
+async function removeVirtualTradingStock(code) {
+  if (!code) return;
+  update({ virtualTradingLoading: true, virtualTradingError: "" });
+  try {
+    const json = await api(`/api/virtual-trading/stock?code=${encodeURIComponent(code)}`, { method: "DELETE" });
+    update({ virtualTrading: json.data || null, virtualTradingLoading: false });
+    showToast("已移出虚拟交易");
+  } catch (error) {
+    update({ virtualTradingLoading: false, virtualTradingError: error.message });
+  }
+}
+
+async function runVirtualTradingBacktest({ useOptimization = false, closeStrategyPreview = false } = {}) {
+  const defaults = defaultBacktestRange();
+  const startDate = state.virtualBacktestStart || defaults.start;
+  const endDate = state.virtualBacktestEnd || defaults.end;
+  const strategyOverride = null;
+  update({ virtualTradingLoading: true, virtualTradingError: "", virtualBacktestTradePages: {} });
+  try {
+    const json = await api("/api/virtual-trading/backtest", {
+      method: "POST",
+      body: JSON.stringify({ startDate, endDate, useOptimization, strategyOverride })
+    });
+    update({
+      virtualTrading: json.data || null,
+      virtualBacktestStart: startDate,
+      virtualBacktestEnd: endDate,
+      virtualTradingLoading: false,
+      virtualTradingError: "",
+      virtualBacktestTradePages: {},
+      virtualStockStrategyDrafts: {},
+      ...(closeStrategyPreview ? { virtualStrategyPreviewCode: "" } : {})
+    });
+    showToast(useOptimization ? "已优化并执行，完成重新模拟" : "策略优化完成");
+  } catch (error) {
+    update({ virtualTradingLoading: false, virtualTradingError: error.message });
+  }
+}
+
+async function applyVirtualBacktestStrategies() {
+  update({ virtualTradingLoading: true, virtualTradingError: "" });
+  try {
+    const json = await api("/api/virtual-trading/backtest/apply-strategies", { method: "POST" });
+    update({ virtualTrading: json.data || null, virtualTradingLoading: false, virtualTradingError: "" });
+    const count = json.data?.appliedStockStrategies?.length || json.data?.stockStrategies?.length || 0;
+    showToast(`已保存 ${fmt(count, 0)} 只股票的策略`);
+  } catch (error) {
+    update({ virtualTradingLoading: false, virtualTradingError: error.message });
+  }
+}
+
+function buildVirtualStockStrategyPayload(code = "", fallback = {}) {
+  const draft = state.virtualStockStrategyDrafts?.[code] || {};
+  const next = { ...(fallback.strategy || fallback || {}) };
+  virtualStrategyFields().forEach((field) => {
+    const raw = Object.prototype.hasOwnProperty.call(draft, field.key) ? draft[field.key] : next[field.key];
+    const value = Number(String(raw ?? "").replace(/,/g, ""));
+    if (!Number.isFinite(value)) return;
+    next[field.key] = field.percent ? value / 100 : value;
+  });
+  return next;
+}
+
+async function saveVirtualStockStrategy(code = "") {
+  const clean = String(code || "").trim();
+  const advice = (state.virtualTrading?.lastBacktest?.stockStrategyAdvice || []).find((item) => String(item.code || "").trim() === clean);
+  const stock = (state.virtualTrading?.watchlist || []).find((item) => String(item.code || "").trim() === clean) || advice || {};
+  if (!clean) return;
+  update({ virtualTradingLoading: true, virtualTradingError: "" });
+  try {
+    const json = await api("/api/virtual-trading/stock-strategy", {
+      method: "POST",
+      body: JSON.stringify({
+        code: clean,
+        name: advice?.name || stock.name || clean,
+        strategy: buildVirtualStockStrategyPayload(clean, advice || {}),
+        summary: advice?.summary || `${stock.name || clean} 手工保存交易策略`,
+        basis: advice?.basis || {}
+      })
+    });
+    update({ virtualTrading: json.data || null, virtualTradingLoading: false, virtualTradingError: "", virtualStrategyPreviewCode: "" });
+    showToast(`已保存 ${stock.name || clean} 的单股策略`);
+  } catch (error) {
+    update({ virtualTradingLoading: false, virtualTradingError: error.message });
+  }
+}
+
+function saferOptimalStockStrategy(advice = {}) {
+  const base = { ...(advice.strategy || {}) };
+  return {
+    ...base,
+    buyThreshold: Math.min(82, Math.max(58, Number(base.buyThreshold || 66) + 2)),
+    sellThreshold: Math.min(55, Math.max(32, Number(base.sellThreshold || 45) + 2)),
+    maxSinglePositionPct: Math.max(0.08, Math.min(0.35, Number(base.maxSinglePositionPct || 0.22) - 0.03)),
+    minCashPct: Math.max(0.02, Math.min(0.25, Number(base.minCashPct || 0.08) + 0.03)),
+    sarWeight: Math.min(1.8, Math.max(0.5, Number(base.sarWeight || 1.12) + 0.12)),
+    bollWeight: Math.min(1.8, Math.max(0.5, Number(base.bollWeight || 1.04) + 0.08)),
+    bullGateWeight: Math.min(1.9, Math.max(0.5, Number(base.bullGateWeight || 1.22) + 0.08)),
+    takeProfitPct: Math.min(28, Math.max(5, Number(base.takeProfitPct || 12) + 1)),
+    stopLossPct: Math.max(-18, Math.min(-3, Number(base.stopLossPct || -7) + 1)),
+    updatedAt: new Date().toISOString(),
+    note: "单股优化：提高买入确认和风控权重，降低单票暴露，保留趋势收益空间。"
+  };
+}
+
+function stockStrategyDraftFromStrategy(strategy = {}) {
+  const draft = {};
+  virtualStrategyFields().forEach((field) => {
+    const value = Number(strategy[field.key]);
+    if (!Number.isFinite(value)) return;
+    draft[field.key] = String(Number((field.percent ? value * 100 : value).toFixed(3)));
+  });
+  return draft;
+}
+
+async function optimizeVirtualStockStrategy(code = "") {
+  const clean = String(code || "").trim();
+  const advice = (state.virtualTrading?.lastBacktest?.stockStrategyAdvice || []).find((item) => String(item.code || "").trim() === clean);
+  if (!advice) {
+    showToast("请先完成策略优化生成这只股票的策略");
+    return;
+  }
+  const strategy = saferOptimalStockStrategy(advice);
+  const draft = stockStrategyDraftFromStrategy(strategy);
+  update({
+    virtualTradingLoading: true,
+    virtualTradingError: "",
+    virtualStockStrategyDrafts: {
+      ...(state.virtualStockStrategyDrafts || {}),
+      [clean]: draft
+    }
+  });
+  try {
+    await api("/api/virtual-trading/stock-strategy", {
+      method: "POST",
+      body: JSON.stringify({
+        code: clean,
+        name: advice.name,
+        strategy,
+        summary: `${advice.name || clean} 已优化为安全优先的单股收益策略：提高确认阈值、增强SAR/BOLL风控、降低单票暴露并保留趋势止盈。`,
+        basis: { ...(advice.basis || {}), optimizedFor: "safety-return-balance" }
+      })
+    });
+    const defaults = defaultBacktestRange();
+    const startDate = state.virtualBacktestStart || defaults.start;
+    const endDate = state.virtualBacktestEnd || defaults.end;
+    const json = await api("/api/virtual-trading/backtest", {
+      method: "POST",
+      body: JSON.stringify({ startDate, endDate, useOptimization: true })
+    });
+    update({
+      virtualTrading: json.data || null,
+      virtualBacktestStart: startDate,
+      virtualBacktestEnd: endDate,
+      virtualTradingLoading: false,
+      virtualTradingError: "",
+      virtualBacktestTradePages: {},
+      virtualStrategyPreviewCode: clean
+    });
+    showToast(`已优化 ${advice.name || clean}，并按组合最优解完成回放`);
+  } catch (error) {
+    update({ virtualTradingLoading: false, virtualTradingError: error.message });
+  }
+}
+
 async function loadSettings() {
   update({ settingsLoading: true, error: "" });
   try {
@@ -1696,8 +2098,15 @@ function compactCandleForContext(item) {
   };
 }
 
+function savedVirtualStrategyForStock(code = "") {
+  const clean = String(code || "").match(/([03648]\d{5}|9\d{5})/)?.[1] || "";
+  if (!clean) return null;
+  return (state.virtualTrading?.stockStrategies || []).find((item) => item.code === clean) || null;
+}
+
 function buildStockDiscussionContext(stock) {
   const advice = stockAdvice(stock);
+  const savedStrategy = savedVirtualStrategyForStock(stock.code);
   const latest = advice.latest || {};
   const levels = advice.levels || {};
   const news = (stock.news || []).slice(0, 3).map((item) => ({
@@ -1766,6 +2175,11 @@ function buildStockDiscussionContext(stock) {
       },
       explanation: advice.explanation || {}
     },
+    savedStrategy: savedStrategy ? {
+      summary: savedStrategy.summary || "",
+      appliedAt: savedStrategy.appliedAt || savedStrategy.updatedAt || "",
+      strategy: savedStrategy.strategy || {}
+    } : null,
     candles: (stock.candles || []).slice(-45).map(compactCandleForContext),
     news
   };
@@ -1791,7 +2205,7 @@ function joinStockDiscussion() {
   }
   const context = buildStockDiscussionContext(stock);
   const prompt = [
-    `已带入 ${stock.name}（${stock.code}）的详情页上下文：报价、K线、MACD、SAR、BOLL、操作计划和政策/新闻 Top3。`,
+    `已带入 ${stock.name}（${stock.code}）的详情页上下文：报价、K线、MACD、SAR、BOLL、操作计划、${savedVirtualStrategyForStock(stock.code) ? "已保存的单股优化策略、" : ""}政策/新闻 Top3。`,
     "",
     "你可能想问：",
     `1. ${stock.name} 现在能不能买或加仓？`,
@@ -1829,6 +2243,10 @@ function isTrackedStock(code = "") {
   return Boolean(code && (state.trackingRows || []).some((item) => item.code === code));
 }
 
+function isVirtualTradingStock(code = "") {
+  return Boolean(code && (state.virtualTrading?.watchlist || []).some((item) => item.code === code));
+}
+
 function appLoginPage() {
   return `
     <main class="app-auth-page">
@@ -1860,6 +2278,7 @@ function shell(content) {
     recommend: ["股票推荐", "主力方向明显且适合当下建仓的跨板块候选"],
     portfolio: ["我的持股", "上传截图更新持股，持久化保存后结合板块、行情与新闻政策给出操作建议"],
     tracking: ["股票追踪", "每 15 分钟采集已追踪股票的分钟价格与成交量"],
+    virtual: ["虚拟交易", "用模拟资金按K线/MACD/SAR/BOLL/牛门线每10分钟演练交易"],
     discussion: ["个股讨论", "和观澜理财师讨论股票、板块与短线交易计划"],
     settings: ["设置", "模型、AK 与缓存策略"]
   };
@@ -1876,6 +2295,7 @@ function shell(content) {
           ${navButton("recommend", "股票推荐", icons.home)}
           ${navButton("portfolio", "我的持股", icons.list)}
           ${navButton("tracking", "股票追踪", icons.radar)}
+          ${navButton("virtual", "虚拟交易", icons.radar)}
           ${navButton("discussion", "个股讨论", icons.chat)}
           ${navButton("settings", "设置", icons.settings)}
         </nav>
@@ -1903,6 +2323,7 @@ function shell(content) {
       </main>
       ${sectorModal()}
       ${stockModal()}
+      ${stockFullscreenChartModal()}
       ${indexModal()}
       ${portfolioUpdateModal()}
     </div>
@@ -2512,6 +2933,585 @@ function trackingBuildAdvice(stock = {}, latestSample = {}) {
   };
 }
 
+function virtualTradingPage() {
+  const data = state.virtualTrading || {};
+  const summary = data.summary || {};
+  const account = data.account || null;
+  if (!account) {
+    return `
+      <section class="virtual-onboarding panel">
+        <div>
+          <span class="section-kicker">虚拟满仓金额</span>
+          <h2>先设置一笔只用于演练的资金</h2>
+          <p>之后可以从股票详情页加入虚拟交易。盘中每10分钟，系统会基于 K线、MACD、SAR、BOLL、牛门线自动生成买卖方案，并用这笔虚拟资金撮合成交。</p>
+        </div>
+        <label class="virtual-capital-field">
+          <span>虚拟满仓金额</span>
+          <input data-virtual-capital value="${escapeHtml(state.virtualTradingInitAmount || "")}" inputmode="decimal" placeholder="例如 200000" />
+        </label>
+        ${state.virtualTradingError ? `<div class="form-error">${escapeHtml(state.virtualTradingError)}</div>` : ""}
+        <button class="primary" data-action="init-virtual-trading" ${state.virtualTradingLoading ? "disabled" : ""}>${state.virtualTradingLoading ? "初始化中..." : "开始模拟"}</button>
+      </section>
+    `;
+  }
+  const positions = data.positions || [];
+  const watchlist = data.watchlist || [];
+  const trades = data.trades || [];
+  const strategy = data.strategy || {};
+  const stats = strategy.stats || {};
+  const activeTab = state.virtualTradingTab === "backtest" ? "backtest" : "live";
+  return `
+    <section class="portfolio-action-bar virtual-action-bar">
+      <div>
+        <strong>${activeTab === "backtest" ? "策略优化" : account.enabled ? "模拟交易运行中" : "模拟交易已停止"}</strong>
+        <span>${activeTab === "backtest" ? "使用真实历史K线评估并优化每只股票的交易策略" : `盘中每10分钟刷新 · ${data.updatedAt ? new Date(data.updatedAt).toLocaleString("zh-CN") : "等待首次交易"}`}</span>
+      </div>
+      <div class="portfolio-actions">
+        ${activeTab === "live" ? `
+          <button class="ghost danger" data-action="reset-virtual-trading" ${state.virtualTradingLoading ? "disabled" : ""}>${state.virtualTradingLoading ? "重置中..." : "重新模拟"}</button>
+        ` : `<button class="ghost" data-action="run-virtual-backtest" ${state.virtualTradingLoading ? "disabled" : ""}>${icons.refresh}${state.virtualTradingLoading ? "优化中" : "策略优化"}</button>`}
+      </div>
+    </section>
+    <section class="virtual-tabs">
+      <button class="${activeTab === "live" ? "active" : ""}" data-virtual-tab="live">模拟交易</button>
+      <button class="${activeTab === "backtest" ? "active" : ""}" data-virtual-tab="backtest">策略优化</button>
+    </section>
+    ${state.virtualTradingError ? `<div class="ticker-alert">${escapeHtml(state.virtualTradingError)}</div>` : ""}
+    ${activeTab === "backtest" ? virtualBacktestPage(data) : `
+    <section class="virtual-metrics">
+      ${virtualMetric("总资产", summary.equity, "money", summary.pnl)}
+      ${virtualMetric("虚拟现金", summary.cash, "money")}
+      ${virtualMetric("持仓市值", summary.positionValue, "money")}
+      ${virtualMetric("收益率", summary.pnlPct, "pct", summary.pnlPct)}
+    </section>
+    <section class="virtual-live-grid">
+      <article class="panel virtual-strategy virtual-live-strategy">
+        <div class="panel-head">
+          <div><strong>策略状态</strong><small>根据虚拟成交自动微调建仓阈值</small></div>
+        </div>
+        <div class="virtual-learning-strip">
+          <span>胜率 <strong>${fmt(stats.winRate || 0, 0)}%</strong></span>
+          <span>已平仓 <strong>${fmt(stats.closedTrades || 0, 0)}笔</strong></span>
+          <span>已实现 <strong class="${pctClass(stats.realizedPnl)}">${money(stats.realizedPnl || 0)}</strong></span>
+          <span>最大回撤 <strong class="down">${fmt(stats.maxDrawdownPct || 0, 1)}%</strong></span>
+        </div>
+        <div class="strategy-bars">
+          ${strategyGauge("买入阈值", strategy.buyThreshold, 58, 82)}
+          ${strategyGauge("卖出阈值", strategy.sellThreshold, 32, 55)}
+          ${strategyGauge("单票上限", (strategy.maxSinglePositionPct || 0) * 100, 8, 35, "%")}
+          ${strategyGauge("现金保护", (strategy.minCashPct || 0) * 100, 2, 25, "%")}
+        </div>
+        <p>${escapeHtml(strategy.note || "等待更多虚拟成交后开始学习。")}</p>
+      </article>
+    </section>
+    <section class="virtual-section">
+      <div class="section-title-row"><h3>虚拟股票池</h3><span>${fmt(watchlist.length, 0)}只</span></div>
+      ${watchlist.length ? `<div class="virtual-stock-grid">${watchlist.map(virtualStockCard).join("")}</div>` : `<section class="panel empty">还没有股票。打开股票详情页，点击“虚拟交易”加入。</section>`}
+    </section>
+    <section class="virtual-section">
+      <div class="section-title-row"><h3>当前虚拟持仓</h3><span>${fmt(positions.length, 0)}只</span></div>
+      ${virtualPositionsTable(positions)}
+    </section>
+    <section class="virtual-section">
+      <div class="section-title-row"><h3>虚拟交易记录</h3><span>${fmt(trades.length, 0)}笔</span></div>
+      ${virtualTradesTable(trades)}
+    </section>
+    `}
+  `;
+}
+
+function virtualBacktestPage(data = {}) {
+  const defaults = defaultBacktestRange();
+  const backtestStart = state.virtualBacktestStart || defaults.start;
+  const backtestEnd = state.virtualBacktestEnd || defaults.end;
+  return `
+    <section class="panel virtual-backtest-panel">
+      <div class="panel-head">
+        <div><strong>策略优化</strong><small>默认使用今天往前一个自然年的真实K线，独立评估并优化策略，不污染当前虚拟账户</small></div>
+      </div>
+      <div class="virtual-backtest-controls">
+        <label><span>开始日期</span><input type="date" data-virtual-backtest-start value="${escapeHtml(backtestStart)}" max="${escapeHtml(backtestEnd)}" /></label>
+        <label><span>结束日期</span><input type="date" data-virtual-backtest-end value="${escapeHtml(backtestEnd)}" min="${escapeHtml(backtestStart)}" max="${escapeHtml(defaults.end)}" /></label>
+      </div>
+      ${virtualBacktestResult(data.lastBacktest)}
+    </section>
+  `;
+}
+
+function virtualBacktestResult(result = null) {
+  if (!result) {
+    return `<div class="virtual-backtest-empty">选择时间区间后，会用已加入虚拟交易的股票逐日评估策略，输出收益、胜率、回撤和成交样本。</div>`;
+  }
+  const stats = result.stats || {};
+  return `
+    <div class="virtual-backtest-result">
+      <div class="virtual-backtest-summary">
+        ${virtualBacktestMetric("初始资金池", result.initialCapital, "money")}
+        ${virtualBacktestMetric("模拟后资金池", result.finalEquity, "money", result.pnl)}
+        ${virtualBacktestMetric("最终收益", result.pnl, "money", result.pnl)}
+        ${virtualBacktestMetric("收益率", result.pnlPct, "pct", result.pnlPct)}
+        ${virtualBacktestMetric("最大回撤", stats.maxDrawdownPct, "pct", -Math.abs(Number(stats.maxDrawdownPct || 0)))}
+      </div>
+      <div class="virtual-backtest-meta">
+        <span>${escapeHtml(result.startDate)} 至 ${escapeHtml(result.endDate)}</span>
+        <span>胜率 ${fmt(stats.winRate || 0, 0)}%</span>
+        <span>平仓 ${fmt(stats.closedTrades || 0, 0)} 笔</span>
+        <span>成交 ${fmt((result.trades || []).length, 0)} 笔</span>
+      </div>
+      ${virtualBacktestPortfolioPlan(result)}
+      ${result.strategy?.note ? `<p class="virtual-backtest-note">${escapeHtml(result.strategy.note)}</p>` : ""}
+      ${(result.notes || []).length ? `<ul class="virtual-backtest-notes">${result.notes.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+      ${virtualBacktestMonitor(result)}
+    </div>
+  `;
+}
+
+function virtualBacktestPortfolioPlan(result = {}) {
+  const plan = result.portfolioStrategyAdvice || {};
+  const stocks = result.stockStrategyAdvice || [];
+  if (!plan.summary && !stocks.length) return "";
+  return `
+    <section class="virtual-backtest-optimization virtual-portfolio-plan">
+      <div class="virtual-optimization-head">
+        <div>
+          <span>组合最优解</span>
+          <strong>${escapeHtml(plan.title || "按单股策略组合回放")}</strong>
+        </div>
+        <em>${fmt(stocks.length, 0)}只单股策略</em>
+      </div>
+      <p class="virtual-optimization-summary">${escapeHtml(plan.summary || "系统已根据每只股票的独立策略生成组合方案，可保存后用于后续模拟交易。")}</p>
+      <div class="virtual-backtest-summary compact">
+        ${virtualBacktestMetric("组合收益", plan.pnlPct, "pct", plan.pnlPct)}
+        ${virtualBacktestMetric("组合盈亏", plan.pnl, "money", plan.pnl)}
+        ${virtualBacktestMetric("组合回撤", plan.maxDrawdownPct, "pct", -Math.abs(Number(plan.maxDrawdownPct || 0)))}
+        ${virtualBacktestMetric("组合胜率", plan.winRate, "pct", plan.winRate)}
+      </div>
+      ${(plan.reasons || []).length ? `<ul class="virtual-backtest-notes">${plan.reasons.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+      <div class="virtual-backtest-actions">
+        <button class="ghost" data-action="apply-virtual-stock-strategies" ${state.virtualTradingLoading || !stocks.length ? "disabled" : ""}>保存全部单股策略</button>
+        <button class="primary" data-action="adopt-virtual-optimization" ${state.virtualTradingLoading || !stocks.length ? "disabled" : ""}>按组合最优解回放</button>
+      </div>
+    </section>
+  `;
+}
+
+function virtualStrategyFields() {
+  return [
+    { key: "buyThreshold", label: "买入阈值", min: 58, max: 82, step: 1, hint: "越低越激进" },
+    { key: "sellThreshold", label: "卖出阈值", min: 32, max: 55, step: 1, hint: "越高越快离场" },
+    { key: "maxSinglePositionPct", label: "单票上限", min: 8, max: 35, step: 1, percent: true, hint: "单股最大仓位%" },
+    { key: "minCashPct", label: "现金保护", min: 2, max: 25, step: 1, percent: true, hint: "保留现金%" },
+    { key: "macdWeight", label: "MACD权重", min: 0.5, max: 1.8, step: 0.05, hint: "动能优先级" },
+    { key: "sarWeight", label: "SAR权重", min: 0.5, max: 1.8, step: 0.05, hint: "趋势风控" },
+    { key: "bollWeight", label: "BOLL权重", min: 0.5, max: 1.8, step: 0.05, hint: "位置约束" },
+    { key: "bullGateWeight", label: "牛门线权重", min: 0.5, max: 1.9, step: 0.05, hint: "趋势门槛" },
+    { key: "takeProfitPct", label: "止盈%", min: 5, max: 28, step: 0.5, hint: "收益保护" },
+    { key: "stopLossPct", label: "止损%", min: -18, max: -3, step: 0.5, hint: "亏损控制" }
+  ];
+}
+
+function virtualStockStrategyField(code = "", field, strategy = {}) {
+  const draft = state.virtualStockStrategyDrafts?.[code] || {};
+  const raw = Object.prototype.hasOwnProperty.call(draft, field.key) ? draft[field.key] : strategy[field.key];
+  const value = Number.isFinite(Number(raw)) ? Number(raw) : 0;
+  const displayValue = Object.prototype.hasOwnProperty.call(draft, field.key) ? value : field.percent ? value * 100 : value;
+  return `
+    <label class="virtual-strategy-field compact">
+      <span>${field.label}</span>
+      <input
+        type="number"
+        data-virtual-stock-strategy="${field.key}"
+        data-stock-code="${escapeHtml(code)}"
+        min="${field.min}"
+        max="${field.max}"
+        step="${field.step}"
+        value="${escapeHtml(String(Number.isFinite(displayValue) ? Number(displayValue.toFixed(3)) : ""))}"
+      />
+    </label>
+  `;
+}
+
+function virtualBacktestMonitor(result = {}) {
+  const charts = result.stockCharts || [];
+  if (!charts.length) return `<div class="virtual-backtest-empty">暂无模拟交易监控数据。重新模拟后会把交易点标在每只股票的价格图中。</div>`;
+  const totalPnl = Number(result.finalCapital || 0) - Number(result.initialCapital || 0);
+  const totalPnlPct = Number(result.initialCapital) ? (totalPnl / Number(result.initialCapital)) * 100 : 0;
+  return `
+    <section class="virtual-backtest-monitor">
+      <div class="section-title-row">
+        <h3>模拟交易监控</h3>
+        <span>整体收益 <b class="${pctClass(totalPnl)}">${money(totalPnl)}</b> · ${totalPnlPct > 0 ? "+" : ""}${fmt(totalPnlPct)}% · ${fmt(charts.length, 0)}只 · ${fmt((result.trades || []).length, 0)}笔模拟交易</span>
+      </div>
+      <div class="virtual-monitor-shell">
+        <div class="virtual-backtest-stock-grid">
+          ${charts.map(virtualBacktestStockCard).join("")}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function virtualBacktestStockCard(chart = {}) {
+  const stock = chart.stock || {};
+  const rows = (chart.rows || []).filter((row) => Number.isFinite(Number(row.close)));
+  const trades = chart.trades || [];
+  const contribution = chart.contribution || {};
+  const code = String(stock.code || "").trim();
+  const last = rows.at(-1) || {};
+  const first = rows[0] || {};
+  const pct = Number(first.close) ? ((Number(last.close) - Number(first.close)) / Number(first.close)) * 100 : 0;
+  const strategyOpen = state.virtualStrategyPreviewCode === code;
+  return `
+    <article class="panel virtual-backtest-stock-card">
+      <div class="tracking-card-head">
+        <div><strong>${escapeHtml(stock.name || stock.code || "--")}</strong><small>${escapeHtml(stock.code || "")} · ${fmt(rows.length, 0)}日K线</small></div>
+        <span class="${pctClass(pct)}">${pct > 0 ? "+" : ""}${fmt(pct)}%</span>
+      </div>
+      ${virtualBacktestContribution(contribution, { code, strategyOpen })}
+      ${strategyOpen ? virtualCurrentStockStrategyPanel(code) : ""}
+      ${virtualBacktestTradeChart(rows, trades, stock)}
+      ${virtualBacktestStockTradeTable(trades, code)}
+    </article>
+  `;
+}
+
+function virtualCurrentStockStrategyPanel(code = "") {
+  const saved = savedVirtualStrategyForStock(code);
+  const advice = (state.virtualTrading?.lastBacktest?.stockStrategyAdvice || []).find((item) => String(item.code || "").trim() === String(code || "").trim());
+  const stock = saved || advice || {};
+  const strategy = stock.strategy || {};
+  if (!Object.keys(strategy).length) {
+    return `<div class="virtual-current-strategy muted">这只股票暂未生成独立策略，请先完成策略优化。</div>`;
+  }
+  return `
+    <div class="virtual-current-strategy">
+      <div>
+        <span>当前策略 · 可手工修改</span>
+        <strong>${escapeHtml(stock.summary || "已使用单股独立交易策略")}</strong>
+      </div>
+      <div class="virtual-strategy-mini-grid">
+        ${virtualStrategyFields().map((field) => virtualStockStrategyField(code, field, strategy)).join("")}
+      </div>
+      <div class="virtual-backtest-actions">
+        <button class="ghost" data-action="optimize-virtual-stock-strategy" data-stock-code="${escapeHtml(code)}" ${state.virtualTradingLoading ? "disabled" : ""}>优化策略</button>
+        <button class="primary" data-action="save-virtual-stock-strategy" data-stock-code="${escapeHtml(code)}" ${state.virtualTradingLoading ? "disabled" : ""}>保存策略</button>
+      </div>
+    </div>
+  `;
+}
+
+function virtualBacktestContribution(contribution = {}, options = {}) {
+  const amount = Number(contribution.amount || 0);
+  const pct = Number(contribution.pct || 0);
+  const code = String(options.code || "").trim();
+  const strategyButton = code
+    ? `<button class="icon-btn virtual-chart-strategy-btn ${options.strategyOpen ? "active" : ""}" data-action="show-virtual-stock-strategy" data-stock-code="${escapeHtml(code)}" title="查看并调整当前策略" aria-label="查看并调整当前策略">${icons.settings}</button>`
+    : "";
+  return `
+    <div class="virtual-contribution-strip">
+      <div>
+        <span>对整体收益贡献</span>
+        <strong class="${pctClass(amount)}">${money(amount)}</strong>
+      </div>
+      <div>
+        <span>贡献占比</span>
+        <strong class="${pctClass(pct)}">${pct > 0 ? "+" : ""}${fmt(pct, 1)}%</strong>
+      </div>
+      <div>
+        <span>已实现 / 持仓</span>
+        <strong>${money(contribution.realizedPnl || 0)} / ${money(contribution.openPnl || 0)}</strong>
+      </div>
+      ${strategyButton}
+    </div>
+  `;
+}
+
+function virtualBacktestStockTradeTable(trades = [], code = "") {
+  const rows = [...trades].reverse();
+  if (!rows.length) return `<p class="virtual-backtest-note">模拟交易：该区间没有触发成交。</p>`;
+  const pageSize = 10;
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const current = Math.min(Math.max(1, Number(state.virtualBacktestTradePages?.[code]) || 1), pageCount);
+  const pageRows = rows.slice((current - 1) * pageSize, current * pageSize);
+  const safeCode = escapeHtml(code);
+  return `
+    <div class="virtual-stock-trade-table">
+      <div class="virtual-stock-trade-head">
+        <strong>模拟交易</strong>
+        <span>第 ${fmt(current, 0)} / ${fmt(pageCount, 0)} 页 · 共 ${fmt(rows.length, 0)} 笔</span>
+      </div>
+      <div class="virtual-monitor-table">
+        <table>
+          <thead><tr><th>时间</th><th>操作</th><th>成交</th><th>机会</th></tr></thead>
+          <tbody>
+            ${pageRows.map((trade) => `
+              <tr>
+                <td data-label="时间"><span class="trade-time">${escapeHtml(formatTradeTime(trade.time))}</span></td>
+                <td data-label="操作"><span class="trade-pill ${trade.side === "buy" ? "buy" : "sell"}">${trade.side === "buy" ? "买入" : "卖出"}</span></td>
+                <td data-label="成交">
+                  <strong>${fmt(trade.price)}</strong>
+                  <small>${fmt(trade.qty, 0)}股 · ${money(trade.amount)}</small>
+                </td>
+                <td data-label="机会"><strong>${fmt(trade.score, 1)}</strong></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+      ${pageCount > 1 ? `
+        <div class="pager virtual-stock-trade-pager">
+          <button class="ghost" data-stock-trade-page="prev" data-stock-code="${safeCode}" ${current <= 1 ? "disabled" : ""}>上一页</button>
+          <span>${fmt((current - 1) * pageSize + 1, 0)}-${fmt(Math.min(current * pageSize, rows.length), 0)} / ${fmt(rows.length, 0)}</span>
+          <button class="ghost" data-stock-trade-page="next" data-stock-code="${safeCode}" ${current >= pageCount ? "disabled" : ""}>下一页</button>
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function formatTradeDate(value = "") {
+  return String(value || "").slice(0, 10) || "--";
+}
+
+function formatTradeTime(value = "") {
+  const text = String(value || "");
+  if (!text) return "--";
+  return text.replace("T", " ").replace(/\.\d+.*$/, "").replace(/\+08:00$/, "").slice(0, 19);
+}
+
+function virtualBacktestTradeChart(rows = [], trades = [], stock = {}) {
+  if (rows.length < 2) return `<div class="virtual-backtest-chart empty">K线不足，无法绘制图表</div>`;
+  const width = 520;
+  const height = 220;
+  const pad = { l: 44, r: 18, t: 20, b: 34 };
+  const prices = rows.flatMap((row) => [Number(row.high || row.close), Number(row.low || row.close), Number(row.close)]).filter(Number.isFinite);
+  const tradePrices = trades.map((trade) => Number(trade.price)).filter(Number.isFinite);
+  const max = Math.max(...prices, ...tradePrices);
+  const min = Math.min(...prices, ...tradePrices);
+  const span = max - min || 1;
+  const x = (index) => pad.l + (index / Math.max(1, rows.length - 1)) * (width - pad.l - pad.r);
+  const y = (value) => pad.t + ((max - value) / span) * (height - pad.t - pad.b);
+  const linePoints = rows.map((row, index) => `${x(index).toFixed(1)},${y(Number(row.close)).toFixed(1)}`).join(" ");
+  const dayIndex = new Map(rows.map((row, index) => [row.day, index]));
+  const grid = [0, 1, 2, 3].map((step) => {
+    const yy = pad.t + step * (height - pad.t - pad.b) / 3;
+    const value = max - step * span / 3;
+    return `<line x1="${pad.l}" y1="${yy.toFixed(1)}" x2="${width - pad.r}" y2="${yy.toFixed(1)}"></line><text x="6" y="${(yy + 4).toFixed(1)}">${fmt(value)}</text>`;
+  }).join("");
+  const markers = trades.map((trade) => {
+    const day = formatTradeDate(trade.time);
+    const index = dayIndex.has(day) ? dayIndex.get(day) : nearestBacktestRowIndex(rows, day);
+    if (index < 0) return "";
+    const tx = x(index);
+    const ty = y(Number(trade.price));
+    const side = trade.side === "buy" ? "buy" : "sell";
+    const labelY = side === "buy" ? ty + 18 : ty - 12;
+    const textAnchor = tx > width - pad.r - 62 ? "end" : tx < pad.l + 42 ? "start" : "middle";
+    const labelX = textAnchor === "end" ? tx - 8 : textAnchor === "start" ? tx + 8 : tx;
+    const title = `${stock.name || stock.code || ""} ${side === "buy" ? "买入" : "卖出"} ${day} 价格 ${fmt(trade.price)} 数量 ${fmt(trade.qty, 0)}股`;
+    return `
+      <g class="bt-marker ${side}">
+        <title>${escapeHtml(title)}</title>
+        <circle cx="${tx.toFixed(1)}" cy="${ty.toFixed(1)}" r="5"></circle>
+        <text x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="${textAnchor}">${side === "buy" ? "买" : "卖"} ${fmt(trade.qty, 0)}</text>
+      </g>
+    `;
+  }).join("");
+  const labels = [rows[0], rows[Math.floor(rows.length / 2)], rows.at(-1)].filter(Boolean).map((row) => {
+    const index = dayIndex.get(row.day) || 0;
+    return `<text x="${Math.min(width - 78, Math.max(pad.l, x(index) - 28)).toFixed(1)}" y="${height - 10}">${escapeHtml(String(row.day).slice(5))}</text>`;
+  }).join("");
+  return `
+    <div class="virtual-backtest-chart-wrap">
+      <button class="virtual-backtest-chart-button" data-action="open-virtual-backtest-chart" data-stock-code="${escapeHtml(stock.code || "")}" title="全屏查看 ${escapeHtml(stock.name || stock.code || "股票")} 模拟交易图表">
+        <svg class="virtual-backtest-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(stock.name || stock.code || "股票")} 回测价格与成交点">
+          <rect x="0" y="0" width="${width}" height="${height}"></rect>
+          <g class="bt-grid">${grid}</g>
+          <polyline class="bt-price" points="${linePoints}"></polyline>
+          <g class="bt-markers">${markers}</g>
+          <g class="bt-labels">${labels}</g>
+        </svg>
+      </button>
+    </div>
+  `;
+}
+
+function nearestBacktestRowIndex(rows = [], day = "") {
+  const target = new Date(`${day}T00:00:00+08:00`).getTime();
+  if (!Number.isFinite(target)) return -1;
+  let best = -1;
+  let bestDistance = Infinity;
+  rows.forEach((row, index) => {
+    const value = new Date(`${row.day}T00:00:00+08:00`).getTime();
+    if (!Number.isFinite(value)) return;
+    const distance = Math.abs(value - target);
+    if (distance < bestDistance) {
+      best = index;
+      bestDistance = distance;
+    }
+  });
+  return best;
+}
+
+function virtualBacktestMetric(label, value, kind = "money", trend = 0) {
+  const text = kind === "pct" ? `${fmt(value)}%` : kind === "number" ? fmt(value, 1) : money(value);
+  return `<span><small>${label}</small><strong class="${trend ? pctClass(trend) : ""}">${text}</strong></span>`;
+}
+
+function virtualMetric(label, value, kind = "money", trend = 0) {
+  const text = kind === "pct" ? `${fmt(value)}%` : money(value);
+  return `
+    <article class="panel virtual-metric">
+      <span>${label}</span>
+      <strong class="${trend ? pctClass(trend) : ""}">${text}</strong>
+    </article>
+  `;
+}
+
+function strategyGauge(label, value, min, max, suffix = "") {
+  const n = Number(value);
+  const pct = Number.isFinite(n) ? Math.max(0, Math.min(100, ((n - min) / (max - min)) * 100)) : 0;
+  return `
+    <div class="strategy-gauge">
+      <div><span>${label}</span><strong>${fmt(n, suffix ? 1 : 0)}${suffix}</strong></div>
+      <i><b style="width:${pct}%"></b></i>
+    </div>
+  `;
+}
+
+function virtualStockCard(stock = {}) {
+  const signal = stock.lastSignal || {};
+  const actionClass = signal.action === "buy" ? "up" : signal.action === "sell" ? "down" : "flat";
+  const savedStrategy = savedVirtualStrategyForStock(stock.code);
+  return `
+    <article class="panel virtual-stock-card" data-stock="${escapeHtml(stock.code || "")}">
+      <div class="tracking-card-head">
+        <div><strong>${escapeHtml(stock.name || stock.code || "--")}</strong><small>${escapeHtml(stock.code || "")}</small></div>
+        <button class="icon-btn tracking-remove-btn danger" data-action="remove-virtual-trading" data-virtual-code="${escapeHtml(stock.code || "")}" title="移出虚拟交易" aria-label="移出虚拟交易">${icons.close}</button>
+      </div>
+      <div class="virtual-stock-price">
+        <span>最新价</span>
+        <strong>${fmt(stock.lastPrice)}</strong>
+        <em class="${pctClass(stock.lastPct)}">${Number.isFinite(Number(stock.lastPct)) ? `${fmt(stock.lastPct)}%` : "--"}</em>
+      </div>
+      <div class="virtual-signal ${actionClass}">
+        <strong>${escapeHtml(signal.summary || "等待下一轮演练")}</strong>
+        <span>${signal.score === null || signal.score === undefined ? "--" : `机会分 ${fmt(signal.score, 1)}`} · ${escapeHtml(signal.orderPlan?.text || "等待交易方案")}</span>
+      </div>
+      ${savedStrategy ? virtualStockStrategyView(savedStrategy) : `<div class="virtual-stock-history-strategy muted">暂无策略优化结果，先运行策略优化并保存策略。</div>`}
+      ${signal.orderPlan ? `<div class="virtual-order-plan">${escapeHtml(signal.orderPlan.trigger || "")}</div>` : ""}
+      ${signal.levels ? `<div class="tracking-advice-levels">
+        <span>买入线 ${fmt(signal.levels.buyLine)}</span>
+        <span>风险线 ${fmt(signal.levels.riskLine)}</span>
+        <span>止损线 ${fmt(signal.levels.stopLine)}</span>
+        <span>止盈线 ${fmt(signal.levels.takeProfitLine)}</span>
+      </div>` : ""}
+      <ul class="virtual-reasons">
+        ${(signal.reasons || []).slice(0, 3).map((item) => `<li>${escapeHtml(item)}</li>`).join("") || "<li>等待行情与K线数据同步。</li>"}
+      </ul>
+    </article>
+  `;
+}
+
+function virtualStockStrategyView(saved = {}) {
+  const s = saved.strategy || {};
+  return `
+    <div class="virtual-stock-history-strategy">
+      <div>
+        <span>策略优化结果</span>
+        <strong>${escapeHtml(saved.summary || "已应用策略优化单股策略")}</strong>
+      </div>
+      <div class="virtual-stock-strategy-chips">
+        <span>买 ${fmt(s.buyThreshold, 0)}</span>
+        <span>卖 ${fmt(s.sellThreshold, 0)}</span>
+        <span>MACD ${fmt(s.macdWeight, 2)}</span>
+        <span>牛门 ${fmt(s.bullGateWeight, 2)}</span>
+      </div>
+    </div>
+  `;
+}
+
+function virtualPositionsTable(positions = []) {
+  if (!positions.length) return `<section class="panel empty">当前没有虚拟持仓，等待系统触发第一笔买入。</section>`;
+  return `
+    <div class="responsive-table virtual-table virtual-position-table">
+      <table>
+        <thead>
+          <tr>
+            <th>股票</th>
+            <th>持仓数量</th>
+            <th>成本价</th>
+            <th>最新价</th>
+            <th>持仓市值</th>
+            <th>浮动盈亏</th>
+            <th>更新时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${positions.map((item) => `
+            <tr data-stock="${escapeHtml(item.code)}">
+              <td data-label="股票"><strong>${escapeHtml(item.name)}</strong><div class="stock-code">${escapeHtml(item.code)}</div></td>
+              <td data-label="持仓数量">${fmt(item.qty, 0)}股</td>
+              <td data-label="成本价">${fmt(item.avgCost)}</td>
+              <td data-label="最新价">${fmt(item.lastPrice)}</td>
+              <td data-label="持仓市值">${money(item.marketValue)}</td>
+              <td data-label="浮动盈亏" class="${pctClass(item.pnl)}">${money(item.pnl)} / ${fmt(item.pnlPct)}%</td>
+              <td data-label="更新时间">${formatTradeTime(item.updatedAt || item.openedAt)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function virtualTradesTable(trades = []) {
+  const rows = [...trades].slice(-80).reverse();
+  if (!rows.length) return `<section class="panel empty">暂无虚拟交易记录。机会分达到策略阈值后会自动执行模拟买卖。</section>`;
+  return `
+    <div class="responsive-table virtual-table virtual-record-table">
+      <table>
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>股票</th>
+            <th>方向</th>
+            <th>成交数量</th>
+            <th>成交价</th>
+            <th>成交金额</th>
+            <th>已实现盈亏</th>
+            <th>触发原因</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((trade) => `
+            <tr data-stock="${escapeHtml(trade.code)}">
+              <td data-label="时间">${formatTradeTime(trade.time)}</td>
+              <td data-label="股票"><strong>${escapeHtml(trade.name || trade.code)}</strong><div class="stock-code">${escapeHtml(trade.code)}</div></td>
+              <td data-label="方向"><span class="trade-pill ${trade.side === "buy" ? "buy" : "sell"}">${trade.side === "buy" ? "买入" : "卖出"}</span></td>
+              <td data-label="成交数量">${fmt(trade.qty, 0)}股</td>
+              <td data-label="成交价">${fmt(trade.price)}</td>
+              <td data-label="成交金额">${money(trade.amount)}</td>
+              <td data-label="已实现盈亏" class="${pctClass(trade.realizedPnl || 0)}">${trade.realizedPnl === null || trade.realizedPnl === undefined ? "--" : `${money(trade.realizedPnl)} / ${fmt(trade.realizedPnlPct)}%`}</td>
+              <td data-label="触发原因"><span class="virtual-record-reason">${escapeHtml(trade.reason || "策略触发")}</span></td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function virtualTradeRow(trade = {}) {
+  return `
+    <article class="panel virtual-trade ${trade.side === "buy" ? "buy" : "sell"}">
+      <div><strong>${trade.side === "buy" ? "买入" : "卖出"} ${escapeHtml(trade.name || trade.code)}</strong><small>${new Date(trade.time || Date.now()).toLocaleString("zh-CN")}</small></div>
+      <div><span>${fmt(trade.qty, 0)}股 @ ${fmt(trade.price)}</span><em>${money(trade.amount)}</em></div>
+      <p>${escapeHtml(trade.reason || "")}</p>
+    </article>
+  `;
+}
+
 function trackingPriceLine(samples = []) {
   const values = samples.map((item) => Number(item.price)).filter(Number.isFinite);
   if (values.length < 2) return `<svg viewBox="0 0 240 72" class="tracking-line"><path d="M0 50 H240" /></svg>`;
@@ -2914,15 +3914,15 @@ function settingsPage() {
     ["glm", { label: "GLM / 智谱" }]
   ];
   const modelPresets = {
-    "kimi-cn": ["kimi-k2.6", "kimi-k2.5", "moonshot-v1-auto", "moonshot-v1-32k", "moonshot-v1-128k"],
-    "kimi-intl": ["kimi-k2.6", "kimi-k2.5", "moonshot-v1-auto", "moonshot-v1-32k", "moonshot-v1-128k"],
+    "kimi-cn": ["kimi-k2.5", "kimi-k2.6", "moonshot-v1-auto", "moonshot-v1-32k", "moonshot-v1-128k"],
+    "kimi-intl": ["kimi-k2.5", "kimi-k2.6", "moonshot-v1-auto", "moonshot-v1-32k", "moonshot-v1-128k"],
     deepseek: ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
     minimax: ["MiniMax-M3", "MiniMax-M2.5", "MiniMax-M2", "MiniMax-M1"],
     glm: ["glm-5.1", "glm-4.6", "glm-4.5", "glm-4-air", "glm-4v-plus"]
   };
   const modelOptions = [...new Set([draft.textModel, providerInfo.textModel, ...(modelPresets[provider] || [])].filter(Boolean))];
   const advisorOptions = [...new Set([draft.advisorModel, providerInfo.advisorModel, ...(modelPresets[provider] || [])].filter(Boolean))];
-  const visionOptions = [...new Set([draft.visionModel, providerInfo.visionModel, ...(provider.startsWith("kimi") ? ["kimi-k2.6", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview"] : provider === "deepseek" ? ["deepseek-ocr"] : provider === "minimax" ? ["MiniMax-VL-01"] : provider === "glm" ? ["glm-ocr", "GLM-5V-Turbo", "glm-4v-plus"] : [])].filter(Boolean))];
+  const visionOptions = [...new Set([draft.visionModel, providerInfo.visionModel, ...(provider.startsWith("kimi") ? ["kimi-k2.5", "kimi-k2.6", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview"] : provider === "deepseek" ? ["deepseek-ocr"] : provider === "minimax" ? ["MiniMax-VL-01"] : provider === "glm" ? ["glm-ocr", "GLM-5V-Turbo", "glm-4v-plus"] : [])].filter(Boolean))];
   const currentApiUrl = draft.apiUrl || providerInfo.apiUrl || "";
   const marketSourceOptions = [
     ["auto", "自动兜底（推荐）", "腾讯、东方财富、新浪/搜狐按接口类型自动选择，失败后继续尝试其它源。"],
@@ -3320,6 +4320,7 @@ function buildPositionTop20View(stocks) {
                   <em>${bullGate.risk}</em>
                 </div>
               </div>
+              ${stock.savedStrategy ? `<div class="recommend-saved-strategy">历史策略：${escapeHtml(stock.savedStrategy.summary || "已保存单股优化策略")}</div>` : ""}
               <p>${buildPositionReason(stock)}</p>
             </article>
           `;
@@ -3364,6 +4365,7 @@ function recommendationList(stocks) {
               <div><span>目标一</span><strong class="up">${fmt(levels.firstTarget)}</strong></div>
             </div>
             <p class="recommend-reason">${stock.reason || "后台正在补充分析。"}</p>
+            ${stock.savedStrategy ? `<p class="recommend-saved-strategy">历史策略：${escapeHtml(stock.savedStrategy.summary || "已保存单股优化策略")}</p>` : ""}
             <ul class="recommend-analysis">
               ${analysis.length ? analysis.map((item) => `<li>${item}</li>`).join("") : `<li>${stock.advice?.plan || "等待后台补齐操作计划。"}</li><li>${stock.advice?.risk || "等待后台补齐风险条件。"}</li>`}
             </ul>
@@ -3408,6 +4410,7 @@ function stockModal() {
   const discussionReady = stockDiscussionReady(stock);
   const discussionHint = stockDiscussionPendingText(stock);
   const tracked = isTrackedStock(stock.code);
+  const virtualJoined = isVirtualTradingStock(stock.code);
   return `
     <div class="overlay open" id="stockOverlay" data-stock-code="${escapeHtml(stock.code || "")}">
       <div class="shade" data-close></div>
@@ -3420,6 +4423,7 @@ function stockModal() {
                 <button class="ghost title-copy-btn" data-action="copy-stock-name" data-copy-value="${escapeHtml(stock.name || "")}" title="复制股票名称">${icons.copy}<span>复制名称</span></button>
                 <button class="ghost title-copy-btn ${discussionReady ? "" : "is-disabled"}" data-action="join-stock-discussion" title="${discussionReady ? "带入详情数据并进入个股讨论" : escapeHtml(discussionHint)}" ${discussionReady ? "" : "disabled"}>${icons.chat}<span>${discussionReady ? "加入讨论" : "数据加载中"}</span></button>
                 <button class="ghost title-copy-btn ${tracked ? "is-tracked" : ""}" data-action="add-stock-tracking" title="${tracked ? "已在追踪池中" : "加入追踪池，每15分钟采集价格与成交量"}">${icons.radar}<span>${tracked ? "已追踪" : "加入追踪"}</span></button>
+                <button class="ghost title-copy-btn ${virtualJoined ? "is-tracked" : ""}" data-action="add-virtual-trading" title="${virtualJoined ? "已在虚拟交易中" : "加入虚拟交易，每10分钟按技术指标演练交易"}">${icons.radar}<span>${virtualJoined ? "已虚拟" : "虚拟交易"}</span></button>
               </div>
             </div>
             <div class="page-subtitle">${advice.summary}</div>
@@ -3443,6 +4447,7 @@ function stockDetailView(stock, advice) {
   const bullGate = bullGateLine(stock.candles || []);
   const latestBullGate = bullGate.at(-1);
   const bullGateInfo = bullGateState(latest, latestBullGate);
+  const savedStrategy = savedVirtualStrategyForStock(stock.code);
   return `
     <section class="broker-quote">
       <div class="broker-main-price">
@@ -3473,10 +4478,11 @@ function stockDetailView(stock, advice) {
           <strong>${advice.action}</strong>
           <small>${advice.plan}</small>
         </div>
+        ${savedStrategy ? stockSavedStrategyView(savedStrategy) : ""}
         ${adviceExplanationView(advice)}
         ${bullGateExplanationView(latest, latestBullGate)}
         ${stockNewsPolicyView(stock)}
-        <div class="chart-wrap interactive-chart">
+        <div class="chart-wrap interactive-chart" data-action="open-fullscreen-stock-chart" title="点击全屏查看图表">
           <div class="stock-chart-toolbar">
             ${stockChartIndicatorControls()}
             ${stockChartLegend()}
@@ -3514,6 +4520,103 @@ function stockDetailView(stock, advice) {
       ${indicatorCard("BOLL", advice.checks?.[3]?.value, `上 ${fmt(latest.bollUpper)} / 中 ${fmt(latest.bollMid)} / 下 ${fmt(latest.bollLower)}`)}
       ${indicatorCard("牛门线", bullGateInfo.value, bullGateInfo.detail)}
       ${indicatorCard("主力", money(stock.mainFlow), `主力占比 ${fmt(stock.mainFlowPct)}% / 量 ${fmt(latest.volume, 0)}`)}
+    </section>
+  `;
+}
+
+function stockFullscreenChartModal() {
+  const stock = activeFullscreenStockChart();
+  if (!state.fullscreenStockChart || !stock) return `<div class="overlay" id="stockFullscreenChartOverlay"></div>`;
+  const trades = stockSimulationTrades(stock.code);
+  const tradeCount = trades.length;
+  const latestTrade = trades.at(-1) || null;
+  const latestCandle = (stock.candles || []).at(-1) || {};
+  const tradePrice = Number.isFinite(Number(latestTrade?.price)) ? Number(latestTrade.price) : Number(stock.price ?? latestCandle.close);
+  return `
+    <div class="overlay open stock-fullscreen-chart-overlay" id="stockFullscreenChartOverlay">
+      <div class="shade" data-action="close-fullscreen-stock-chart"></div>
+      <section class="stock-fullscreen-chart" role="dialog" aria-modal="true" aria-label="${escapeHtml(stock.name || stock.code || "股票")} 全屏图表">
+        <header class="stock-fullscreen-head">
+          <div>
+            <strong>${escapeHtml(stock.name || "--")} <span>${escapeHtml(stock.code || "")}</span></strong>
+            <small>全屏图表 · 横向滚动查看全部K线 · ${fmt(stock.candles?.length || 0, 0)}根K线 · ${fmt(tradeCount, 0)}笔模拟交易</small>
+          </div>
+          <div class="stock-fullscreen-price-strip" aria-label="全屏交易价格摘要">
+            <span><small>交易价格</small><b>${fmt(tradePrice)}</b></span>
+            <span><small>最近数量</small><b>${latestTrade ? `${fmt(latestTrade.qty, 0)}股` : "--"}</b></span>
+            <span><small>K线收盘</small><b>${fmt(latestCandle.close)}</b></span>
+          </div>
+          <button class="icon-btn" data-action="close-fullscreen-stock-chart" title="关闭">${icons.close}</button>
+        </header>
+        <div class="stock-fullscreen-toolbar">
+          ${stockChartIndicatorControls({ includeSimulation: true })}
+          ${stockChartLegend({ includeSimulation: true })}
+        </div>
+        <div class="stock-fullscreen-chart-stage">
+          <div class="stock-fullscreen-scroll" id="stockFullscreenChartScroll">
+            <canvas id="stockChartFullscreen"></canvas>
+          </div>
+          <div class="chart-tip fullscreen-chart-tip" id="stockChartFullscreenTip" aria-hidden="true"></div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function activeFullscreenStockChart() {
+  if (!state.fullscreenStockChart) return null;
+  return state.fullscreenStockChartData || state.modalStock || null;
+}
+
+function openVirtualBacktestFullscreenChart(code = "") {
+  const clean = String(code || "").trim();
+  const chart = (state.virtualTrading?.lastBacktest?.stockCharts || [])
+    .find((item) => String(item.stock?.code || "").trim() === clean);
+  if (!chart) {
+    showToast("未找到这只股票的模拟交易图表数据");
+    return;
+  }
+  const rows = (chart.rows || [])
+    .filter((row) => ["open", "close", "high", "low"].every((key) => Number.isFinite(Number(row[key]))))
+    .map((row) => ({
+      day: row.day,
+      open: Number(row.open),
+      close: Number(row.close),
+      high: Number(row.high),
+      low: Number(row.low),
+      volume: Number(row.volume || 0)
+    }));
+  if (rows.length < 2) {
+    showToast("K线不足，暂时无法全屏查看");
+    return;
+  }
+  fullscreenStockChartPointer = null;
+  fullscreenStockChartScrollAnchor = null;
+  update({
+    fullscreenStockChart: true,
+    fullscreenStockChartData: {
+      ...(chart.stock || {}),
+      candles: rows
+    }
+  });
+}
+
+function stockSavedStrategyView(saved = {}) {
+  const s = saved.strategy || {};
+  return `
+    <section class="stock-saved-strategy">
+      <div>
+        <span>历史模拟策略已应用</span>
+        <strong>${saved.summary || "单股优化策略已保存"}</strong>
+      </div>
+      <div class="stock-saved-strategy-grid">
+        <span>MACD <b>${fmt(s.macdWeight, 2)}</b></span>
+        <span>SAR <b>${fmt(s.sarWeight, 2)}</b></span>
+        <span>BOLL <b>${fmt(s.bollWeight, 2)}</b></span>
+        <span>牛门线 <b>${fmt(s.bullGateWeight, 2)}</b></span>
+        <span>止盈 <b>${fmt(s.takeProfitPct, 1)}%</b></span>
+        <span>止损 <b>${fmt(s.stopLossPct, 1)}%</b></span>
+      </div>
     </section>
   `;
 }
@@ -3829,7 +4932,7 @@ function bullGateExplanationView(latest = {}, gateValue) {
   `;
 }
 
-function stockChartIndicatorControls() {
+function stockChartIndicatorControls({ includeSimulation = false } = {}) {
   const indicators = state.stockChartIndicators || {};
   const items = [
     ["kline", "K", "K线", "显示/隐藏 K 线"],
@@ -3838,6 +4941,7 @@ function stockChartIndicatorControls() {
     ["bullgate", "门", "牛门线", "显示/隐藏 牛门线"],
     ["macd", "M", "MACD", "显示/隐藏 MACD"]
   ];
+  if (includeSimulation) items.push(["simulation", "交", "模拟交易", "显示/隐藏 模拟交易成交点"]);
   return `
     <div class="stock-chart-controls" aria-label="图表指标显示控制">
       ${items.map(([key, icon, label, title]) => `
@@ -3849,10 +4953,11 @@ function stockChartIndicatorControls() {
   `;
 }
 
-function stockChartLegend() {
+function stockChartLegend({ includeSimulation = false } = {}) {
   const indicators = state.stockChartIndicators || {};
   const showMacd = indicators.macd !== false;
   const showBullGate = indicators.bullgate !== false;
+  const showSimulation = includeSimulation && indicators.simulation !== false;
   const items = [
     { className: "k-up", label: "红K", text: "收盘高于开盘" },
     { className: "k-down", label: "绿K", text: "收盘低于开盘" },
@@ -3862,7 +4967,8 @@ function stockChartLegend() {
     showBullGate ? { className: "bullgate", label: "牛门线", text: "多头确认门槛" } : null,
     showMacd ? { className: "macd-dif", label: "DIF", text: "快线" } : null,
     showMacd ? { className: "macd-dea", label: "DEA", text: "慢线" } : null,
-    showMacd ? { className: "macd-hist", label: "柱", text: "红强绿弱" } : null
+    showMacd ? { className: "macd-hist", label: "柱", text: "红强绿弱" } : null,
+    showSimulation ? { className: "simulation", label: "模拟交易", text: "买卖成交点" } : null
   ].filter(Boolean);
   return `
     <div class="stock-chart-legend" aria-label="K BOLL SAR 图例">
@@ -3877,12 +4983,33 @@ function stockChartLegend() {
   `;
 }
 
-function drawStockChart(stock) {
-  const canvas = document.querySelector("#stockChart");
+function stockSimulationTrades(code = "") {
+  const clean = String(code || "").trim();
+  if (!clean) return [];
+  const backtestChart = (state.virtualTrading?.lastBacktest?.stockCharts || [])
+    .find((item) => String(item.stock?.code || "").trim() === clean);
+  const backtestTrades = backtestChart?.trades || [];
+  const liveTrades = (state.virtualTrading?.trades || []).filter((item) => String(item.code || item.stock?.code || "").trim() === clean);
+  return [...backtestTrades, ...liveTrades]
+    .filter((item) => item && Number.isFinite(Number(item.price)))
+    .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+}
+
+function drawStockChart(stock, options = {}) {
+  const fullscreen = Boolean(options.fullscreen);
+  const canvas = document.querySelector(options.selector || "#stockChart");
   if (!canvas || !stock.candles?.length) return;
-  const tip = document.querySelector("#stockChartTip");
+  const tip = document.querySelector(options.tipSelector || "#stockChartTip");
+  const fullscreenScroll = fullscreen ? canvas.closest(".stock-fullscreen-scroll") : null;
+  const scrollAnchor = fullscreen ? captureFullscreenChartScroll() || fullscreenStockChartScrollAnchor : null;
+  if (fullscreen) {
+    const minWidth = fullscreenScroll?.clientWidth || 900;
+    const desiredWidth = Math.max(minWidth, stock.candles.length * 13 + 128);
+    canvas.style.width = `${desiredWidth}px`;
+    if (scrollAnchor) restoreFullscreenChartScroll(scrollAnchor);
+  }
   const rect = canvas.getBoundingClientRect();
-  const wrapRect = canvas.closest(".chart-wrap")?.getBoundingClientRect() || rect;
+  const wrapRect = (fullscreen ? canvas.closest(".stock-fullscreen-chart-stage") : canvas.closest(".chart-wrap"))?.getBoundingClientRect() || rect;
   const tipOffset = {
     x: rect.left - wrapRect.left,
     y: rect.top - wrapRect.top
@@ -3894,6 +5021,7 @@ function drawStockChart(stock) {
   const showSar = indicators.sar !== false;
   const showBullGate = indicators.bullgate !== false;
   const showMacd = indicators.macd !== false;
+  const showSimulation = fullscreen && indicators.simulation !== false;
   const dpr = window.devicePixelRatio || 1;
   canvas.width = rect.width * dpr;
   canvas.height = rect.height * dpr;
@@ -3901,7 +5029,7 @@ function drawStockChart(stock) {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, rect.width, rect.height);
   const advice = stockAdvice(stock);
-  const candles = stock.candles.slice(-64);
+  const candles = fullscreen ? stock.candles : stock.candles.slice(-64);
   const offset = stock.candles.length - candles.length;
   const boll = advice.boll.slice(offset);
   const sar = advice.sar.slice(offset);
@@ -3909,6 +5037,13 @@ function drawStockChart(stock) {
   const hist = advice.macd.hist.slice(offset);
   const dif = advice.macd.dif.slice(offset);
   const dea = advice.macd.dea.slice(offset);
+  const simulationTrades = showSimulation ? stockSimulationTrades(stock.code) : [];
+  const tradeByDay = new Map();
+  simulationTrades.forEach((trade) => {
+    const day = formatTradeDate(trade.time);
+    if (!tradeByDay.has(day)) tradeByDay.set(day, []);
+    tradeByDay.get(day).push(trade);
+  });
   const pad = { l: 48, r: 58, t: 48, b: 32 };
   const axisH = 28;
   const axisTop = rect.height - axisH;
@@ -3930,6 +5065,10 @@ function drawStockChart(stock) {
   if (showBullGate) {
     highs.push(...bullGate.filter((value) => Number.isFinite(Number(value))));
     lows.push(...bullGate.filter((value) => Number.isFinite(Number(value))));
+  }
+  if (showSimulation) {
+    highs.push(...simulationTrades.map((trade) => Number(trade.price)).filter(Number.isFinite));
+    lows.push(...simulationTrades.map((trade) => Number(trade.price)).filter(Number.isFinite));
   }
   const max = Math.max(...highs);
   const min = Math.min(...lows);
@@ -3989,6 +5128,46 @@ function drawStockChart(stock) {
   if (showBullGate) {
     drawLine(ctx, bullGate, "#2ee6d6", y, pad.l, xStep, { dash: [6, 4], width: 1.9 });
   }
+  if (showSimulation) {
+    candles.forEach((c, i) => {
+      const trades = tradeByDay.get(c.day) || [];
+      trades.forEach((trade, tradeIndex) => {
+        const tx = pad.l + i * xStep + xStep / 2;
+        const ty = y(Number(trade.price));
+        const buy = trade.side === "buy";
+        const markerY = buy ? ty - 7 - tradeIndex * 4 : ty + 7 + tradeIndex * 4;
+        ctx.save();
+        ctx.fillStyle = buy ? "#ff4d57" : "#00b070";
+        ctx.strokeStyle = "#09131c";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        if (buy) {
+          ctx.moveTo(tx, ty - 7 - tradeIndex * 4);
+          ctx.lineTo(tx - 6, ty + 6 - tradeIndex * 4);
+          ctx.lineTo(tx + 6, ty + 6 - tradeIndex * 4);
+        } else {
+          ctx.moveTo(tx, ty + 7 + tradeIndex * 4);
+          ctx.lineTo(tx - 6, ty - 6 + tradeIndex * 4);
+          ctx.lineTo(tx + 6, ty - 6 + tradeIndex * 4);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        drawTradePriceLabel(ctx, {
+          x: tx,
+          y: markerY,
+          side: trade.side,
+          price: trade.price,
+          qty: trade.qty,
+          chartLeft,
+          chartRight,
+          mainTop: pad.t,
+          mainBottom
+        });
+        ctx.restore();
+      });
+    });
+  }
   const hMax = Math.max(...hist.map(Math.abs), 0.01);
   if (showMacd) {
     const macdPadT = 20;
@@ -4037,7 +5216,7 @@ function drawStockChart(stock) {
     const x = pad.l + i * xStep + xStep / 2;
     ctx.fillText(String(c.day || "").slice(5), x, axisTop + 18);
   });
-  const pointer = normalizeStockPointer(stockChartPointer, rect, pad, mainBottom, candles.length);
+  const pointer = normalizeStockPointer(fullscreen ? fullscreenStockChartPointer : stockChartPointer, rect, pad, mainBottom, candles.length);
   if (pointer) {
     const index = Math.max(0, Math.min(candles.length - 1, Math.round((pointer.x - pad.l - xStep / 2) / xStep)));
     const candle = candles[index];
@@ -4063,7 +5242,19 @@ function drawStockChart(stock) {
     ctx.font = "11px system-ui";
     ctx.fillText(fmt(pointerPrice), chartRight + 9, pointer.y + 4);
     ctx.restore();
-    updateStockChartTip(tip, pointer, candle, pointerPrice, showBoll ? boll[index] : null, showSar ? sar[index] : null, showBullGate ? bullGate[index] : null, rect, tipOffset);
+    updateStockChartTip(
+      tip,
+      pointer,
+      candle,
+      pointerPrice,
+      showBoll ? boll[index] : null,
+      showSar ? sar[index] : null,
+      showBullGate ? bullGate[index] : null,
+      showMacd ? { dif: dif[index], dea: dea[index], hist: hist[index] } : null,
+      showSimulation ? tradeByDay.get(candle.day) || [] : [],
+      rect,
+      tipOffset
+    );
   } else if (tip) {
     tip.classList.remove("show");
   }
@@ -4073,8 +5264,14 @@ function drawStockChart(stock) {
     showBoll ? { color: "#f2b84b", label: "BOLL上/下轨" } : null,
     showBoll ? { color: "#54a3ff", label: "BOLL中轨" } : null,
     showSar ? { color: "#d184ff", label: "SAR反转点", dot: true } : null,
-    showBullGate ? { color: "#2ee6d6", label: "牛门线" } : null
+    showBullGate ? { color: "#2ee6d6", label: "牛门线" } : null,
+    showSimulation ? { color: "#ff4d57", label: "模拟买入", marker: "triangle-up" } : null,
+    showSimulation ? { color: "#00b070", label: "模拟卖出", marker: "triangle-down" } : null
   ].filter(Boolean));
+  if (fullscreen) {
+    restoreFullscreenChartScroll(scrollAnchor);
+    fullscreenStockChartScrollAnchor = captureFullscreenChartScroll();
+  }
 }
 
 function findTrackedStock(code = "") {
@@ -4266,6 +5463,14 @@ function scheduleStockChartDraw() {
   stockChartDrawFrame = requestAnimationFrame(() => {
     stockChartDrawFrame = 0;
     if (state.modalStock) drawStockChart(state.modalStock);
+    const fullscreenStock = activeFullscreenStockChart();
+    if (fullscreenStock) {
+      drawStockChart(fullscreenStock, {
+        fullscreen: true,
+        selector: "#stockChartFullscreen",
+        tipSelector: "#stockChartFullscreenTip"
+      });
+    }
   });
 }
 
@@ -4289,7 +5494,20 @@ function drawChartLineLegend(ctx, x, y, items) {
     ctx.strokeStyle = item.color;
     ctx.fillStyle = item.color;
     ctx.lineWidth = 2;
-    if (item.dot) {
+    if (item.marker === "triangle-up" || item.marker === "triangle-down") {
+      ctx.beginPath();
+      if (item.marker === "triangle-up") {
+        ctx.moveTo(cursor + 11, y - 6);
+        ctx.lineTo(cursor + 4, y + 6);
+        ctx.lineTo(cursor + 18, y + 6);
+      } else {
+        ctx.moveTo(cursor + 11, y + 6);
+        ctx.lineTo(cursor + 4, y - 6);
+        ctx.lineTo(cursor + 18, y - 6);
+      }
+      ctx.closePath();
+      ctx.fill();
+    } else if (item.dot) {
       for (let i = 0; i < 3; i += 1) {
         ctx.beginPath();
         ctx.arc(cursor + 4 + i * 7, y, 2.2, 0, Math.PI * 2);
@@ -4308,6 +5526,45 @@ function drawChartLineLegend(ctx, x, y, items) {
   ctx.restore();
 }
 
+function drawTradePriceLabel(ctx, { x, y, side, price, qty, chartLeft, chartRight, mainTop, mainBottom } = {}) {
+  const buy = side === "buy";
+  const label = `${buy ? "买" : "卖"} ${fmt(price)} · ${fmt(qty, 0)}股`;
+  ctx.save();
+  ctx.font = "700 11px system-ui";
+  ctx.textBaseline = "middle";
+  const paddingX = 7;
+  const width = Math.ceil(ctx.measureText(label).width + paddingX * 2);
+  const height = 22;
+  let left = buy ? x + 8 : x - width - 8;
+  let top = buy ? y - height - 6 : y + 6;
+  left = Math.max(chartLeft + 2, Math.min(chartRight - width - 2, left));
+  top = Math.max(mainTop + 2, Math.min(mainBottom - height - 2, top));
+  ctx.fillStyle = buy ? "rgba(255, 77, 87, 0.9)" : "rgba(0, 176, 112, 0.9)";
+  ctx.strokeStyle = "rgba(7, 17, 26, 0.95)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  roundedRectPath(ctx, left, top, width, height, 6);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "left";
+  ctx.fillText(label, left + paddingX, top + height / 2);
+  ctx.restore();
+}
+
+function roundedRectPath(ctx, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+}
+
 function normalizeStockPointer(pointer, rect, pad, mainH, candleCount) {
   if (!pointer || !candleCount) return null;
   const minX = pad.l;
@@ -4321,12 +5578,23 @@ function normalizeStockPointer(pointer, rect, pad, mainH, candleCount) {
   };
 }
 
-function updateStockChartTip(tip, pointer, candle, price, boll, sar, bullGate, rect, offset = { x: 0, y: 0 }) {
+function updateStockChartTip(tip, pointer, candle, price, boll, sar, bullGate, macdPoint = null, trades = [], rect, offset = { x: 0, y: 0 }) {
   if (!tip || !candle) return;
-  const left = pointer.x > rect.width * 0.62 ? pointer.x - 172 : pointer.x + 12;
-  const top = pointer.y > rect.height * 0.52 ? pointer.y - 122 : pointer.y + 12;
-  tip.style.left = `${offset.x + Math.max(8, Math.min(rect.width - 164, left))}px`;
-  tip.style.top = `${offset.y + Math.max(8, Math.min(rect.height - 118, top))}px`;
+  const width = trades.length ? 232 : 178;
+  const height = trades.length ? 190 : 150;
+  const left = pointer.x > rect.width * 0.62 ? pointer.x - width - 12 : pointer.x + 12;
+  const top = pointer.y > rect.height * 0.52 ? pointer.y - height - 12 : pointer.y + 12;
+  const tradeRows = trades.length
+    ? `<div class="chart-tip-trades">${trades.slice(0, 4).map((trade) => `
+        <span class="${trade.side === "buy" ? "buy" : "sell"}">
+          <b>${trade.side === "buy" ? "买入" : "卖出"}</b>
+          <em>${fmt(trade.price)}</em>
+          <small>${fmt(trade.qty, 0)}股 · ${money(trade.amount)}</small>
+        </span>
+      `).join("")}</div>`
+    : `<span>模拟交易 无</span>`;
+  tip.style.left = `${offset.x + Math.max(8, Math.min(rect.width - width - 8, left))}px`;
+  tip.style.top = `${offset.y + Math.max(8, Math.min(rect.height - height - 8, top))}px`;
   tip.innerHTML = `
     <b>${candle.day}</b>
     <span>X 日期：${candle.day}</span>
@@ -4336,6 +5604,8 @@ function updateStockChartTip(tip, pointer, candle, price, boll, sar, bullGate, r
     <span>BOLL ${fmt(boll?.upper)} / ${fmt(boll?.mid)} / ${fmt(boll?.lower)}</span>
     <span>SAR ${fmt(sar)}</span>
     <span>牛门线 ${fmt(bullGate)}</span>
+    <span>MACD ${fmt(macdPoint?.dif, 3)} / ${fmt(macdPoint?.dea, 3)} / ${fmt(macdPoint?.hist, 3)}</span>
+    ${tradeRows}
   `;
   tip.classList.add("show");
 }
@@ -4470,15 +5740,17 @@ function render(scrollAnchor = captureScrollAnchors()) {
   const stockScroll = captureStockModalScroll();
   skipAdvisorFocusRestoreOnce = false;
   if (state.page === "radar" || state.page === "sector") state.page = "home";
-  const pages = { home: homePage, recommend: recommendPage, portfolio: portfolioPage, tracking: trackingPage, discussion: discussionPage, settings: settingsPage };
+  const pages = { home: homePage, recommend: recommendPage, portfolio: portfolioPage, tracking: trackingPage, virtual: virtualTradingPage, discussion: discussionPage, settings: settingsPage };
   suppressScrollTracking = true;
   app.innerHTML = shell(pages[state.page]());
   restoreScrollAnchors(scrollAnchor);
+  syncActiveButtonLoading();
   setTimeout(() => {
     suppressScrollTracking = false;
   }, 140);
   restoreStockModalScroll(stockScroll);
   if (state.modalStock) scheduleStockChartDraw();
+  if (activeFullscreenStockChart()) scheduleStockChartDraw();
   if (state.page === "tracking") scheduleTrackingChartsDraw();
   if (state.modalIndex) requestAnimationFrame(() => drawIndexChart(state.modalIndex));
   if (advisorFocus) restoreAdvisorFocus(advisorFocus);
@@ -4494,40 +5766,83 @@ app.addEventListener("pointerdown", (event) => {
 app.addEventListener("click", (event) => {
   if (event.target.closest(".sector-news a")) return;
   if (event.target.closest(".tracking-news a")) return;
+  if (buttonActionLock && event.target.closest("button, [role='button'], [data-action]")) {
+    event.preventDefault();
+    showToast(`正在执行：${buttonActionName || "当前功能"}，请等待完成`);
+    return;
+  }
   if (event.target.closest("[data-action='clear-sector-search']")) {
-    update({ sectorSearch: "", sectorSearchDraft: "", sectorPage: 1 });
-    loadSectorNewsForTop();
+    runButtonAction(event.target, "清空搜索", async () => {
+      update({ sectorSearch: "", sectorSearchDraft: "", sectorPage: 1 });
+      await loadSectorNewsForTop();
+    });
     return;
   }
   if (event.target.closest("[data-action='clear-tracking-search']")) {
-    update({ trackingSearch: "", trackingPageNo: 1 });
+    runButtonAction(event.target, "清空追踪搜索", () => update({ trackingSearch: "", trackingPageNo: 1 }), { successToast: true });
     return;
   }
   if (event.target.closest("[data-action='submit-sector-search']")) {
-    applySectorSearch(state.sectorSearchDraft);
+    runButtonAction(event.target, "搜索", () => applySectorSearch(state.sectorSearchDraft), { successToast: true });
     return;
   }
   const suggestion = event.target.closest("[data-action='apply-search-suggestion']");
   if (suggestion) {
-    applySectorSearch(suggestion.dataset.searchValue || state.sectorSearchDraft);
+    runButtonAction(suggestion, "应用搜索建议", () => applySectorSearch(suggestion.dataset.searchValue || state.sectorSearchDraft), { successToast: true });
     return;
   }
   const copyTarget = event.target.closest("[data-action='copy-stock-name']");
   if (copyTarget) {
-    copyText(copyTarget.dataset.copyValue || state.modalStock?.name || "", "股票名称");
+    runButtonAction(copyTarget, "复制股票名称", () => copyText(copyTarget.dataset.copyValue || state.modalStock?.name || "", "股票名称"));
     return;
   }
   if (event.target.closest("[data-action='join-stock-discussion']")) {
-    joinStockDiscussion();
+    runButtonAction(event.target, "加入讨论", () => joinStockDiscussion());
     return;
   }
   if (event.target.closest("[data-action='add-stock-tracking']")) {
-    addModalStockToTracking();
+    runButtonAction(event.target, "加入追踪", () => addModalStockToTracking());
+    return;
+  }
+  if (event.target.closest("[data-action='add-virtual-trading']")) {
+    runButtonAction(event.target, "加入虚拟交易", () => addModalStockToVirtualTrading());
+    return;
+  }
+  if (event.target.closest("[data-action='close-fullscreen-stock-chart']")) {
+    runButtonAction(event.target, "关闭全屏图表", () => {
+      fullscreenStockChartPointer = null;
+      fullscreenStockChartScrollAnchor = null;
+      update({ fullscreenStockChart: false, fullscreenStockChartData: null });
+    }, { successToast: true });
+    return;
+  }
+  if (event.target.closest("[data-action='open-fullscreen-stock-chart']") && !event.target.closest("[data-chart-indicator]")) {
+    runButtonAction(event.target, "打开全屏图表", () => {
+      fullscreenStockChartPointer = null;
+      fullscreenStockChartScrollAnchor = null;
+      update({ fullscreenStockChart: true, fullscreenStockChartData: null });
+    }, { successToast: true });
+    return;
+  }
+  const virtualBacktestChart = event.target.closest("[data-action='open-virtual-backtest-chart']");
+  if (virtualBacktestChart) {
+    runButtonAction(virtualBacktestChart, "打开模拟交易图表", () => openVirtualBacktestFullscreenChart(virtualBacktestChart.dataset.stockCode));
+    return;
+  }
+  const showVirtualStrategy = event.target.closest("[data-action='show-virtual-stock-strategy']");
+  if (showVirtualStrategy) {
+    const code = String(showVirtualStrategy.dataset.stockCode || "").trim();
+    runButtonAction(showVirtualStrategy, "查看当前策略", () => update({ virtualStrategyPreviewCode: state.virtualStrategyPreviewCode === code ? "" : code }), { successToast: true });
     return;
   }
   const removeTracking = event.target.closest("[data-action='remove-tracking']");
   if (removeTracking) {
-    removeTrackingStock(removeTracking.dataset.trackingCode);
+    runButtonAction(removeTracking, "取消追踪", () => removeTrackingStock(removeTracking.dataset.trackingCode));
+    return;
+  }
+  const removeVirtual = event.target.closest("[data-action='remove-virtual-trading']");
+  if (removeVirtual) {
+    runButtonAction(removeVirtual, "移出虚拟交易", () => removeVirtualTradingStock(removeVirtual.dataset.virtualCode));
     return;
   }
   const page = event.target.closest("[data-page]")?.dataset.page;
@@ -4537,70 +5852,185 @@ app.addEventListener("click", (event) => {
   const sectorSort = event.target.closest("[data-sector-sort]")?.dataset.sectorSort;
   const sectorPageAction = event.target.closest("[data-sector-page]")?.dataset.sectorPage;
   const trackingPageAction = event.target.closest("[data-tracking-page]")?.dataset.trackingPage;
+  const virtualTab = event.target.closest("[data-virtual-tab]")?.dataset.virtualTab;
   const stockSort = event.target.closest("[data-stock-sort]")?.dataset.stockSort;
   if (page) {
-    update({ page });
-    if (page === "recommend") loadRecommendations();
-    if (page === "tracking") loadTracking();
-    if (page === "portfolio") {
-      loadAdminStatus();
-      loadHoldings();
-    }
-    if (page === "settings") loadSettings();
+    runButtonAction(event.target, "切换页面", async () => {
+      update({ page });
+      if (page === "recommend") await loadRecommendations();
+      if (page === "tracking") await loadTracking();
+      if (page === "virtual") await loadVirtualTrading();
+      if (page === "portfolio") {
+        await loadAdminStatus();
+        await loadHoldings();
+      }
+      if (page === "settings") await loadSettings();
+    });
+    return;
   }
   if (sectorId) {
-    update({ selectedSectorId: sectorId, modalSectorId: sectorId });
-    loadStocks(sectorId);
+    runButtonAction(event.target, "打开板块Top10", async () => {
+      update({ selectedSectorId: sectorId, modalSectorId: sectorId });
+      await loadStocks(sectorId);
+    });
+    return;
   }
-  if (indexSymbol) openIndex(indexSymbol);
-  if (stockCode) openStock(stockCode);
+  if (indexSymbol) {
+    runButtonAction(event.target, "打开指数趋势", () => openIndex(indexSymbol));
+    return;
+  }
+  if (stockCode) {
+    runButtonAction(event.target, "打开股票详情", () => openStock(stockCode));
+    return;
+  }
   if (sectorSort) {
-    update({ sectorSort, sectorPage: 1 });
-    loadSectorNewsForTop();
+    runButtonAction(event.target, "切换板块排序", async () => {
+      update({ sectorSort, sectorPage: 1 });
+      await loadSectorNewsForTop();
+    });
+    return;
   }
   if (sectorPageAction) {
-    const pageInfo = homeSectorPageInfo();
-    const nextPage = sectorPageAction === "next" ? pageInfo.current + 1 : pageInfo.current - 1;
-    update({ sectorPage: Math.min(pageInfo.pageCount, Math.max(1, nextPage)) });
-    loadSectorNewsForTop();
+    runButtonAction(event.target, "切换板块分页", async () => {
+      const pageInfo = homeSectorPageInfo();
+      const nextPage = sectorPageAction === "next" ? pageInfo.current + 1 : pageInfo.current - 1;
+      update({ sectorPage: Math.min(pageInfo.pageCount, Math.max(1, nextPage)) });
+      await loadSectorNewsForTop();
+    });
+    return;
   }
   if (trackingPageAction) {
-    const pageInfo = trackingPageInfo();
-    const nextPage = trackingPageAction === "next" ? pageInfo.current + 1 : pageInfo.current - 1;
-    update({ trackingPageNo: Math.min(pageInfo.pageCount, Math.max(1, nextPage)) });
+    runButtonAction(event.target, "切换追踪分页", () => {
+      const pageInfo = trackingPageInfo();
+      const nextPage = trackingPageAction === "next" ? pageInfo.current + 1 : pageInfo.current - 1;
+      update({ trackingPageNo: Math.min(pageInfo.pageCount, Math.max(1, nextPage)) });
+    }, { successToast: true });
+    return;
   }
-  if (stockSort) update({ modalStockSort: stockSort });
+  const stockTradePageButton = event.target.closest("[data-stock-trade-page]");
+  if (stockTradePageButton) {
+    runButtonAction(stockTradePageButton, "切换交易记录分页", () => {
+      const code = String(stockTradePageButton.dataset.stockCode || "").trim();
+      const action = stockTradePageButton.dataset.stockTradePage;
+      const chart = (state.virtualTrading?.lastBacktest?.stockCharts || []).find((item) => String(item.stock?.code || "").trim() === code);
+      const pageCount = Math.max(1, Math.ceil((chart?.trades?.length || 0) / 10));
+      const current = Math.min(Math.max(1, Number(state.virtualBacktestTradePages?.[code]) || 1), pageCount);
+      const nextPage = action === "next" ? current + 1 : current - 1;
+      update({
+        virtualBacktestTradePages: {
+          ...(state.virtualBacktestTradePages || {}),
+          [code]: Math.min(pageCount, Math.max(1, nextPage))
+        }
+      });
+    }, { successToast: true });
+    return;
+  }
+  if (virtualTab) {
+    runButtonAction(event.target, "切换虚拟交易视图", () => update({ virtualTradingTab: virtualTab === "backtest" ? "backtest" : "live" }), { successToast: true });
+    return;
+  }
+  if (stockSort) {
+    runButtonAction(event.target, "切换股票排序", () => update({ modalStockSort: stockSort }), { successToast: true });
+    return;
+  }
   const chartIndicator = event.target.closest("[data-chart-indicator]")?.dataset.chartIndicator;
   if (chartIndicator) {
     event.preventDefault();
-    const current = state.stockChartIndicators || {};
-    state.stockChartIndicators = { ...current, [chartIndicator]: current[chartIndicator] === false };
-    syncStockChartIndicatorControls();
-    scheduleStockChartDraw();
+    runButtonAction(event.target, "切换图表指标", () => {
+      const current = state.stockChartIndicators || {};
+      state.stockChartIndicators = { ...current, [chartIndicator]: current[chartIndicator] === false };
+      syncStockChartIndicatorControls();
+      scheduleStockChartDraw();
+    }, { successToast: true });
     return;
   }
   const closeTarget = event.target.closest("[data-close]");
   if (closeTarget) {
-    closeTopOverlay();
+    runButtonAction(closeTarget, "关闭浮层", () => closeTopOverlay(), { successToast: true });
+    return;
   }
   if (event.target.closest("[data-action='refresh']")) {
-    state.recommendations = [];
-    state.sectorStockIndexReady = false;
-    state.sectorStockIndexLoading = false;
-    loadSectors({ silent: true, clearStockCache: true });
-    if (state.page === "recommend") setTimeout(() => loadRecommendations({ force: true }), 0);
-    if (state.page === "tracking") setTimeout(() => loadTracking({ force: true }), 0);
+    runButtonAction(event.target, "刷新行情", async () => {
+      state.recommendations = [];
+      state.sectorStockIndexReady = false;
+      state.sectorStockIndexLoading = false;
+      await loadSectors({ silent: true, clearStockCache: true });
+      if (state.page === "recommend") await loadRecommendations({ force: true });
+      if (state.page === "tracking") await loadTracking({ force: true });
+      if (state.page === "virtual") await loadVirtualTrading({ force: true });
+    }, { successToast: true });
+    return;
   }
-  if (event.target.closest("[data-action='refresh-tracking']")) loadTracking({ force: true });
-  if (event.target.closest("[data-action='analyze-portfolio']")) analyzePortfolioText();
-  if (event.target.closest("[data-action='verify-app-access']")) verifyAppAccess();
-  if (event.target.closest("[data-action='open-portfolio-update']")) update({ modalPortfolioUpdate: true, ocrProgress: "" });
-  if (event.target.closest("[data-action='reload-portfolio']")) loadHoldings();
-  if (event.target.closest("[data-action='clear-portfolio']")) clearHoldings();
-  if (event.target.closest("[data-action='save-settings']")) saveSettings();
-  if (event.target.closest("[data-action='send-advisor-message']")) sendAdvisorMessage();
-  if (event.target.closest("[data-action='clear-advisor-chat']")) clearAdvisorChat();
-  if (event.target.closest("[data-action='toggle-advisor-thinking']")) setAdvisorDeepThinking(!state.advisorDeepThinking);
+  if (event.target.closest("[data-action='refresh-tracking']")) {
+    runButtonAction(event.target, "立即采样", () => loadTracking({ force: true }));
+    return;
+  }
+  if (event.target.closest("[data-action='init-virtual-trading']")) {
+    runButtonAction(event.target, "开始模拟", () => initVirtualTrading());
+    return;
+  }
+  if (event.target.closest("[data-action='reset-virtual-trading']")) {
+    runButtonAction(event.target, "重新模拟", () => resetVirtualTrading());
+    return;
+  }
+  if (event.target.closest("[data-action='run-virtual-backtest']")) {
+    runButtonAction(event.target, "策略优化", () => runVirtualTradingBacktest());
+    return;
+  }
+  if (event.target.closest("[data-action='adopt-virtual-optimization']")) {
+    runButtonAction(event.target, "优化并执行", () => runVirtualTradingBacktest({ useOptimization: true }));
+    return;
+  }
+  if (event.target.closest("[data-action='apply-virtual-stock-strategies']")) {
+    runButtonAction(event.target, "保存策略", () => applyVirtualBacktestStrategies());
+    return;
+  }
+  const saveStockStrategy = event.target.closest("[data-action='save-virtual-stock-strategy']");
+  if (saveStockStrategy) {
+    runButtonAction(saveStockStrategy, "保存单股策略", () => saveVirtualStockStrategy(saveStockStrategy.dataset.stockCode));
+    return;
+  }
+  const optimizeStockStrategy = event.target.closest("[data-action='optimize-virtual-stock-strategy']");
+  if (optimizeStockStrategy) {
+    runButtonAction(optimizeStockStrategy, "优化单股策略", () => optimizeVirtualStockStrategy(optimizeStockStrategy.dataset.stockCode));
+    return;
+  }
+  if (event.target.closest("[data-action='analyze-portfolio']")) {
+    runButtonAction(event.target, "持股分析", () => analyzePortfolioText());
+    return;
+  }
+  if (event.target.closest("[data-action='verify-app-access']")) {
+    runButtonAction(event.target, "身份验证", () => verifyAppAccess());
+    return;
+  }
+  if (event.target.closest("[data-action='open-portfolio-update']")) {
+    runButtonAction(event.target, "打开更新持股", () => update({ modalPortfolioUpdate: true, ocrProgress: "" }), { successToast: true });
+    return;
+  }
+  if (event.target.closest("[data-action='reload-portfolio']")) {
+    runButtonAction(event.target, "刷新持股建议", () => loadHoldings());
+    return;
+  }
+  if (event.target.closest("[data-action='clear-portfolio']")) {
+    runButtonAction(event.target, "清空持股", () => clearHoldings());
+    return;
+  }
+  if (event.target.closest("[data-action='save-settings']")) {
+    runButtonAction(event.target, "保存并应用", () => saveSettings());
+    return;
+  }
+  if (event.target.closest("[data-action='send-advisor-message']")) {
+    sendAdvisorMessage();
+    return;
+  }
+  if (event.target.closest("[data-action='clear-advisor-chat']")) {
+    runButtonAction(event.target, "清空对话", () => clearAdvisorChat(), { successToast: true });
+    return;
+  }
+  if (event.target.closest("[data-action='toggle-advisor-thinking']")) {
+    runButtonAction(event.target, state.advisorDeepThinking ? "关闭深度思考" : "开启深度思考", () => setAdvisorDeepThinking(!state.advisorDeepThinking), { successToast: true });
+    return;
+  }
   const choiceOption = event.target.closest("[data-choice-option]");
   if (choiceOption) {
     const selected = !choiceOption.classList.contains("selected");
@@ -4611,23 +6041,25 @@ app.addEventListener("click", (event) => {
   }
   const fillChoices = event.target.closest("[data-action='fill-advisor-choices']");
   if (fillChoices) {
-    const choices = selectedAdvisorChoices(fillChoices.dataset.choiceMessage);
-    const text = advisorChoicesReplyText(choices);
-    if (!text) {
-      showToast("先选择一个或多个问题");
-      keepAdvisorInputFocused();
-      return;
-    }
-    skipAdvisorFocusRestoreOnce = true;
-    update({ advisorInput: text });
-    setTimeout(() => {
-      const input = document.querySelector("[data-advisor-input]");
-      if (!input) return;
-      input.value = text;
-      state.advisorInput = text;
-      input.focus({ preventScroll: true });
-      input.setSelectionRange(text.length, text.length);
-    }, 0);
+    runButtonAction(fillChoices, "填入选择", () => {
+      const choices = selectedAdvisorChoices(fillChoices.dataset.choiceMessage);
+      const text = advisorChoicesReplyText(choices);
+      if (!text) {
+        showToast("先选择一个或多个问题");
+        keepAdvisorInputFocused();
+        return;
+      }
+      skipAdvisorFocusRestoreOnce = true;
+      update({ advisorInput: text });
+      setTimeout(() => {
+        const input = document.querySelector("[data-advisor-input]");
+        if (!input) return;
+        input.value = text;
+        state.advisorInput = text;
+        input.focus({ preventScroll: true });
+        input.setSelectionRange(text.length, text.length);
+      }, 0);
+    }, { successToast: true });
     return;
   }
   const sendChoices = event.target.closest("[data-action='send-advisor-choices']");
@@ -4639,18 +6071,22 @@ app.addEventListener("click", (event) => {
       keepAdvisorInputFocused();
       return;
     }
+    showToast("发送选择执行中...");
     sendAdvisorMessage(text);
     return;
   }
   const win = event.target.closest("[data-window]")?.dataset.window;
   if (win) {
-    state.window = Number(win);
-    state.sectorPage = 1;
-    state.recommendations = [];
-    state.sectorStockIndexReady = false;
-    state.sectorStockIndexLoading = false;
-    loadSectors({ silent: true, clearStockCache: true });
-    if (state.page === "recommend") setTimeout(() => loadRecommendations({ force: true }), 0);
+    runButtonAction(event.target, "切换周期", async () => {
+      state.window = Number(win);
+      state.sectorPage = 1;
+      state.recommendations = [];
+      state.sectorStockIndexReady = false;
+      state.sectorStockIndexLoading = false;
+      await loadSectors({ silent: true, clearStockCache: true });
+      if (state.page === "recommend") await loadRecommendations({ force: true });
+    });
+    return;
   }
 });
 
@@ -4709,6 +6145,32 @@ app.addEventListener("input", (event) => {
       input.focus();
       input.setSelectionRange(cursor, cursor);
     });
+  }
+  if (event.target.matches("[data-virtual-capital]")) {
+    state.virtualTradingInitAmount = event.target.value;
+    state.virtualTradingError = "";
+  }
+  if (event.target.matches("[data-virtual-backtest-start]")) {
+    state.virtualBacktestStart = event.target.value;
+    state.virtualTradingError = "";
+  }
+  if (event.target.matches("[data-virtual-backtest-end]")) {
+    state.virtualBacktestEnd = event.target.value;
+    state.virtualTradingError = "";
+  }
+  if (event.target.matches("[data-virtual-stock-strategy]")) {
+    const code = String(event.target.dataset.stockCode || "").trim();
+    const key = event.target.dataset.virtualStockStrategy;
+    if (code && key) {
+      state.virtualStockStrategyDrafts = {
+        ...(state.virtualStockStrategyDrafts || {}),
+        [code]: {
+          ...(state.virtualStockStrategyDrafts?.[code] || {}),
+          [key]: event.target.value
+        }
+      };
+      state.virtualTradingError = "";
+    }
   }
   if (event.target.matches("[data-setting]")) {
     const key = event.target.dataset.setting;
@@ -4786,6 +6248,10 @@ app.addEventListener("keydown", (event) => {
     if (event.isComposing || state.trackingSearchComposing) return;
     event.preventDefault();
   }
+  if (event.target.matches("[data-virtual-capital]") && event.key === "Enter") {
+    event.preventDefault();
+    initVirtualTrading();
+  }
   if (event.target.matches("[data-advisor-input]") && event.key === "Enter" && !event.shiftKey) {
     if (event.isComposing || state.advisorComposing) return;
     if (state.advisorLoading || state.advisorStreaming) return;
@@ -4802,6 +6268,16 @@ window.addEventListener("keydown", (event) => {
 });
 
 app.addEventListener("pointermove", (event) => {
+  const fullscreenCanvas = event.target.closest("#stockChartFullscreen");
+  if (fullscreenCanvas && activeFullscreenStockChart()) {
+    const rect = fullscreenCanvas.getBoundingClientRect();
+    fullscreenStockChartPointer = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top
+    };
+    scheduleStockChartDraw();
+    return;
+  }
   const trackingCanvas = event.target.closest("[data-tracking-chart]");
   if (trackingCanvas) {
     const code = trackingCanvas.dataset.trackingChart;
@@ -4835,6 +6311,10 @@ app.addEventListener("pointerleave", (event) => {
     stockChartPointer = null;
     scheduleStockChartDraw();
   }
+  if (event.target.closest("#stockChartFullscreen") && activeFullscreenStockChart()) {
+    fullscreenStockChartPointer = null;
+    scheduleStockChartDraw();
+  }
 }, true);
 
 window.addEventListener("resize", () => {
@@ -4849,6 +6329,12 @@ window.addEventListener("scroll", () => {
   rememberPageScroll();
 }, { passive: true });
 
+app.addEventListener("scroll", (event) => {
+  if (event.target?.id === "stockFullscreenChartScroll") {
+    fullscreenStockChartScrollAnchor = captureFullscreenChartScroll();
+  }
+}, true);
+
 render();
 startAppDataOnce();
 setInterval(() => requestAutoRefresh("home"), homeRefreshMs);
@@ -4856,3 +6342,6 @@ setInterval(() => requestAutoRefresh("recommend"), recommendRefreshMs);
 setInterval(() => {
   if (isAppAuthenticated() && state.page === "tracking") loadTracking({ force: true, silent: true });
 }, recommendRefreshMs);
+setInterval(() => {
+  if (isAppAuthenticated() && state.page === "virtual") loadVirtualTrading({ force: true, silent: true });
+}, 10 * 60_000);

@@ -9,6 +9,7 @@ const security = require("../src/server/utils/security.js");
 const symbols = require("../src/server/market/symbols.js");
 const indicators = require("../src/server/market/indicators.js");
 const aiClient = require("../src/server/ai/kimiClient.js");
+const time = require("../src/server/utils/time.js");
 
 function candlesFromCloses(closes, { volume = 1000, bullish = true } = {}) {
   return closes.map((close, index) => {
@@ -90,6 +91,16 @@ describe("symbol utilities", () => {
     assert.equal(symbols.eastmoneySecidFromSymbol("sh600000"), "1.600000");
     assert.equal(symbols.eastmoneySecidFromSymbol("sz000001"), "0.000001");
     assert.equal(symbols.eastmoneySecidFromSymbol("bj430001"), "0.430001");
+  });
+});
+
+describe("A-share trading time", () => {
+  it("starts automatic trading refresh at the official 09:30 open", () => {
+    assert.equal(time.isAshareTradingAutoRefreshTime(new Date("2026-06-18T01:29:00.000Z")), false);
+    assert.equal(time.isAshareTradingAutoRefreshTime(new Date("2026-06-18T01:30:00.000Z")), true);
+    assert.equal(time.isAshareTradingAutoRefreshTime(new Date("2026-06-18T03:31:00.000Z")), false);
+    assert.equal(time.isAshareTradingAutoRefreshTime(new Date("2026-06-18T05:00:00.000Z")), true);
+    assert.equal(time.isAshareTradingAutoRefreshTime(new Date("2026-06-20T02:00:00.000Z")), false);
   });
 });
 
