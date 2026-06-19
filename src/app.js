@@ -3,6 +3,7 @@ import { sectorReasons, stockAdvice } from "./analytics.js";
 const app = document.querySelector("#app");
 let stockChartPointer = null;
 let fullscreenStockChartPointer = null;
+let fullscreenStockChartScrollAnchor = null;
 let stockChartDrawFrame = 0;
 let trackingChartDrawFrame = 0;
 const trackingChartPointers = new Map();
@@ -388,6 +389,30 @@ function restoreScrollable(anchor) {
   el.scrollLeft = clampScroll(anchor.left, el.scrollWidth - el.clientWidth);
 }
 
+function captureFullscreenChartScroll() {
+  const el = document.querySelector("#stockFullscreenChartScroll");
+  const stock = activeFullscreenStockChart();
+  if (!el || !stock) return null;
+  const maxLeft = Math.max(0, el.scrollWidth - el.clientWidth);
+  return {
+    selector: "#stockFullscreenChartScroll",
+    identity: stock.code || "",
+    left: el.scrollLeft,
+    ratio: maxLeft ? el.scrollLeft / maxLeft : 0,
+    atRight: maxLeft > 0 && maxLeft - el.scrollLeft < 4
+  };
+}
+
+function restoreFullscreenChartScroll(anchor = fullscreenStockChartScrollAnchor) {
+  if (!anchor) return;
+  const el = document.querySelector(anchor.selector || "#stockFullscreenChartScroll");
+  const stock = activeFullscreenStockChart();
+  if (!el || !stock || anchor.identity !== (stock.code || "")) return;
+  const maxLeft = Math.max(0, el.scrollWidth - el.clientWidth);
+  const target = anchor.atRight ? maxLeft : Number.isFinite(Number(anchor.ratio)) ? maxLeft * Number(anchor.ratio) : anchor.left;
+  el.scrollLeft = clampScroll(target, maxLeft);
+}
+
 function captureScrollAnchors() {
   return {
     page: state.page,
@@ -397,7 +422,8 @@ function captureScrollAnchors() {
     sector: captureScrollable("#sectorOverlay.open .drawer-body", state.modalSectorId || ""),
     index: captureScrollable("#indexOverlay.open .drawer-body", state.modalIndex?.id || ""),
     portfolioUpdate: captureScrollable("#portfolioUpdateOverlay.open .mini-dialog", state.modalPortfolioUpdate ? "open" : ""),
-    chat: captureScrollable(".chat-thread", state.page === "discussion" ? "discussion" : "")
+    chat: captureScrollable(".chat-thread", state.page === "discussion" ? "discussion" : ""),
+    fullscreenChart: captureFullscreenChartScroll()
   };
 }
 
@@ -427,6 +453,7 @@ function restoreScrollAnchors(anchor) {
     if (anchor.index?.identity === (state.modalIndex?.id || "")) restoreScrollable(anchor.index);
     if (anchor.portfolioUpdate?.identity === (state.modalPortfolioUpdate ? "open" : "")) restoreScrollable(anchor.portfolioUpdate);
     if (anchor.chat?.identity === (state.page === "discussion" ? "discussion" : "") && state.page !== "discussion") restoreScrollable(anchor.chat);
+    restoreFullscreenChartScroll(anchor.fullscreenChart);
   };
   restore();
   requestAnimationFrame(restore);
@@ -1094,10 +1121,12 @@ function closeTopOverlay() {
   if (state.modalPortfolioUpdate && (state.ocrLoading || state.portfolioLoading)) return;
   if (state.fullscreenStockChart) {
     fullscreenStockChartPointer = null;
+    fullscreenStockChartScrollAnchor = null;
     update({ fullscreenStockChart: false, fullscreenStockChartData: null });
   } else if (state.modalStock) {
     stockChartPointer = null;
     fullscreenStockChartPointer = null;
+    fullscreenStockChartScrollAnchor = null;
     update({ modalStock: null, fullscreenStockChartData: null });
   } else if (state.modalIndex) {
     update({ modalIndex: null });
@@ -4562,6 +4591,7 @@ function openVirtualBacktestFullscreenChart(code = "") {
     return;
   }
   fullscreenStockChartPointer = null;
+  fullscreenStockChartScrollAnchor = null;
   update({
     fullscreenStockChart: true,
     fullscreenStockChartData: {
@@ -4970,11 +5000,13 @@ function drawStockChart(stock, options = {}) {
   const canvas = document.querySelector(options.selector || "#stockChart");
   if (!canvas || !stock.candles?.length) return;
   const tip = document.querySelector(options.tipSelector || "#stockChartTip");
+  const fullscreenScroll = fullscreen ? canvas.closest(".stock-fullscreen-scroll") : null;
+  const scrollAnchor = fullscreen ? captureFullscreenChartScroll() || fullscreenStockChartScrollAnchor : null;
   if (fullscreen) {
-    const scroll = canvas.closest(".stock-fullscreen-scroll");
-    const minWidth = scroll?.clientWidth || 900;
+    const minWidth = fullscreenScroll?.clientWidth || 900;
     const desiredWidth = Math.max(minWidth, stock.candles.length * 13 + 128);
     canvas.style.width = `${desiredWidth}px`;
+    if (scrollAnchor) restoreFullscreenChartScroll(scrollAnchor);
   }
   const rect = canvas.getBoundingClientRect();
   const wrapRect = (fullscreen ? canvas.closest(".stock-fullscreen-chart-stage") : canvas.closest(".chart-wrap"))?.getBoundingClientRect() || rect;
@@ -5236,6 +5268,10 @@ function drawStockChart(stock, options = {}) {
     showSimulation ? { color: "#ff4d57", label: "模拟买入", marker: "triangle-up" } : null,
     showSimulation ? { color: "#00b070", label: "模拟卖出", marker: "triangle-down" } : null
   ].filter(Boolean));
+  if (fullscreen) {
+    restoreFullscreenChartScroll(scrollAnchor);
+    fullscreenStockChartScrollAnchor = captureFullscreenChartScroll();
+  }
 }
 
 function findTrackedStock(code = "") {
@@ -5775,6 +5811,7 @@ app.addEventListener("click", (event) => {
   if (event.target.closest("[data-action='close-fullscreen-stock-chart']")) {
     runButtonAction(event.target, "关闭全屏图表", () => {
       fullscreenStockChartPointer = null;
+      fullscreenStockChartScrollAnchor = null;
       update({ fullscreenStockChart: false, fullscreenStockChartData: null });
     }, { successToast: true });
     return;
@@ -5782,6 +5819,7 @@ app.addEventListener("click", (event) => {
   if (event.target.closest("[data-action='open-fullscreen-stock-chart']") && !event.target.closest("[data-chart-indicator]")) {
     runButtonAction(event.target, "打开全屏图表", () => {
       fullscreenStockChartPointer = null;
+      fullscreenStockChartScrollAnchor = null;
       update({ fullscreenStockChart: true, fullscreenStockChartData: null });
     }, { successToast: true });
     return;
@@ -6290,6 +6328,12 @@ window.addEventListener("scroll", () => {
   scrollGeneration += 1;
   rememberPageScroll();
 }, { passive: true });
+
+app.addEventListener("scroll", (event) => {
+  if (event.target?.id === "stockFullscreenChartScroll") {
+    fullscreenStockChartScrollAnchor = captureFullscreenChartScroll();
+  }
+}, true);
 
 render();
 startAppDataOnce();
