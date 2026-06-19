@@ -1,5 +1,4 @@
 import { sectorReasons, stockAdvice } from "./analytics.js";
-import { holdingsUnauthorizedMessage, shouldRequestHoldingsAuth } from "./shared/advisorAuth.mjs";
 
 const app = document.querySelector("#app");
 let stockChartPointer = null;
@@ -12,6 +11,7 @@ let advisorStreamTimer = null;
 let advisorStreamRunId = 0;
 let advisorDeferredRender = false;
 let advisorScrollRunId = 0;
+let portfolioTextDeferredRender = false;
 const advisorWelcomeMessage = { role: "assistant", content: "说股票或板块，直接给我代码/名称和你的持仓情况。我会按偏激进短线思路给结论、价位和风控。" };
 const advisorHistoryStorageKey = "guanlanAdvisorMessages:v1";
 const advisorDeepThinkingStorageKey = "guanlanAdvisorDeepThinking:v1";
@@ -73,26 +73,23 @@ const state = {
   advisorLoading: false,
   advisorComposing: false,
   advisorStreaming: false,
-  advisorAuthPrompt: null,
-  advisorAuthPassword: "",
-  advisorAuthLoading: false,
-  advisorAuthError: "",
   advisorDeepThinking: loadAdvisorDeepThinking(),
   settings: null,
   settingsDraft: null,
   settingsLoading: false,
   settingsSaving: false,
   adminAuthToken: sessionStorage.getItem("guanlanAdminToken") || "",
-  adminHoldingsAuthorized: sessionStorage.getItem("guanlanAdminHoldingsAuthorized") === "1",
+  adminHoldingsAuthorized: Boolean(sessionStorage.getItem("guanlanAdminToken")) || sessionStorage.getItem("guanlanAdminHoldingsAuthorized") === "1",
+  appPasswordInput: "",
+  appAuthLoading: false,
+  appAuthError: "",
   adminStatus: null,
-  adminPasswordInput: "",
-  adminUnlocking: false,
   portfolioText: "",
+  portfolioTextComposing: false,
   portfolioRows: [],
   portfolioSummary: null,
   portfolioParser: "",
   portfolioSavedAt: "",
-  portfolioLocked: false,
   portfolioLoading: false,
   ocrLoading: false,
   ocrProgress: "",
@@ -127,6 +124,8 @@ let pendingAutoRefresh = new Set();
 let pendingScrollAnchor = null;
 let scrollGeneration = 0;
 let suppressScrollTracking = false;
+let appDataStarted = false;
+const pageScrollMemory = new Map();
 
 const icons = {
   home: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/></svg>`,
@@ -141,6 +140,7 @@ const icons = {
 };
 
 function update(patch) {
+  rememberPageScroll();
   const scrollAnchor = pendingScrollAnchor?.page === state.page ? pendingScrollAnchor : captureScrollAnchors();
   if (Object.prototype.hasOwnProperty.call(patch, "advisorInput") && patch.advisorInput === "") {
     skipAdvisorFocusRestoreOnce = true;
@@ -171,6 +171,65 @@ function clearAdvisorHistoryStorage() {
     localStorage.removeItem(advisorHistoryStorageKey);
   } catch {
     // 忽略浏览器隐私模式或存储禁用。
+  }
+}
+
+function isAppAuthenticated() {
+  return Boolean(state.adminAuthToken);
+}
+
+function clearAppSession() {
+  sessionStorage.removeItem("guanlanAdminToken");
+  sessionStorage.removeItem("guanlanAdminHoldingsAuthorized");
+  sessionStorage.removeItem("guanlanAdvisorAuthorized");
+  appDataStarted = false;
+}
+
+function startAppDataOnce() {
+  if (!isAppAuthenticated() || appDataStarted) return;
+  appDataStarted = true;
+  loadSectors();
+  loadTracking({ silent: true });
+  loadAdminStatus();
+}
+
+function focusAppPassword() {
+  requestAnimationFrame(() => {
+    document.querySelector("[data-app-password]")?.focus({ preventScroll: true });
+  });
+}
+
+async function verifyAppAccess() {
+  const password = String(document.querySelector("[data-app-password]")?.value || state.appPasswordInput || "").trim();
+  if (!password) {
+    update({ appAuthError: "请输入管理员密码" });
+    return;
+  }
+  update({ appAuthLoading: true, appAuthError: "", error: "" });
+  try {
+    const res = await fetch("/api/admin/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password })
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || "管理员密码错误");
+    sessionStorage.setItem("guanlanAdminToken", json.data.token);
+    sessionStorage.setItem("guanlanAdminHoldingsAuthorized", "1");
+    update({
+      adminAuthToken: json.data.token,
+      adminHoldingsAuthorized: true,
+      appPasswordInput: "",
+      appAuthLoading: false,
+      appAuthError: "",
+      adminStatus: { ...(state.adminStatus || {}), ...json.data, authenticated: true }
+    });
+    startAppDataOnce();
+  } catch (error) {
+    update({
+      appAuthLoading: false,
+      appAuthError: error.message || "管理员密码错误"
+    });
   }
 }
 
@@ -235,10 +294,44 @@ function isAdvisorComposingActive() {
   return state.page === "discussion" && state.advisorComposing && input && document.activeElement === input;
 }
 
+function isPortfolioTextComposingActive() {
+  const input = document.querySelector("[data-portfolio-text]");
+  return state.modalPortfolioUpdate && state.portfolioTextComposing && input && document.activeElement === input;
+}
+
+function focusPortfolioText({ value = state.portfolioText, start = null, end = null } = {}) {
+  if (!state.modalPortfolioUpdate) return;
+  requestAnimationFrame(() => {
+    const input = document.querySelector("[data-portfolio-text]");
+    if (!input) return;
+    input.value = value ?? input.value;
+    input.focus({ preventScroll: true });
+    const nextStart = Number.isFinite(start) ? start : input.value.length;
+    const nextEnd = Number.isFinite(end) ? end : nextStart;
+    try {
+      input.setSelectionRange(nextStart, nextEnd);
+    } catch {
+      // iOS/Safari 在中文输入组合态可能暂时不允许设置选择区，保留焦点即可。
+    }
+  });
+}
+
 function clampScroll(value, max) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.min(Math.max(0, n), Math.max(0, max));
+}
+
+function currentWindowScroll() {
+  return {
+    x: window.scrollX || document.documentElement.scrollLeft || 0,
+    y: window.scrollY || document.documentElement.scrollTop || 0
+  };
+}
+
+function rememberPageScroll(page = state.page) {
+  if (!isAppAuthenticated() || !page) return;
+  pageScrollMemory.set(page, currentWindowScroll());
 }
 
 function captureScrollable(selector, identity = "") {
@@ -264,10 +357,7 @@ function captureScrollAnchors() {
   return {
     page: state.page,
     generation: scrollGeneration,
-    window: {
-      x: window.scrollX || document.documentElement.scrollLeft || 0,
-      y: window.scrollY || document.documentElement.scrollTop || 0
-    },
+    window: currentWindowScroll(),
     stock: captureScrollable("#stockOverlay.open .drawer-body", state.modalStock?.code || ""),
     sector: captureScrollable("#sectorOverlay.open .drawer-body", state.modalSectorId || ""),
     index: captureScrollable("#indexOverlay.open .drawer-body", state.modalIndex?.id || ""),
@@ -278,15 +368,17 @@ function captureScrollAnchors() {
 
 function restoreScrollAnchors(anchor) {
   if (!anchor) return;
+  const remembered = pageScrollMemory.get(anchor.page);
+  const windowAnchor = Number(anchor.window?.y || 0) > 0 ? anchor.window : remembered || anchor.window;
   const restore = () => {
     if (anchor.page === state.page) {
       const maxWindowY = document.documentElement.scrollHeight - window.innerHeight;
-      const targetY = Number(anchor.window?.y || 0);
+      const targetY = Number(windowAnchor?.y || 0);
       const currentY = window.scrollY || document.documentElement.scrollTop || 0;
       if (targetY <= 0 && currentY > 20 && pendingScrollAnchor !== anchor) return;
       if (targetY > 0) pendingScrollAnchor = anchor;
       window.scrollTo({
-        left: clampScroll(anchor.window?.x, document.documentElement.scrollWidth - window.innerWidth),
+        left: clampScroll(windowAnchor?.x, document.documentElement.scrollWidth - window.innerWidth),
         top: clampScroll(targetY, maxWindowY),
         behavior: "auto"
       });
@@ -304,6 +396,8 @@ function restoreScrollAnchors(anchor) {
   restore();
   requestAnimationFrame(restore);
   setTimeout(restore, 80);
+  setTimeout(restore, 220);
+  setTimeout(restore, 520);
 }
 
 function captureStockModalScroll() {
@@ -328,6 +422,10 @@ function restoreStockModalScroll(anchor) {
   };
   apply();
   requestAnimationFrame(apply);
+  requestAnimationFrame(() => requestAnimationFrame(apply));
+  setTimeout(apply, 80);
+  setTimeout(apply, 220);
+  setTimeout(apply, 520);
 }
 
 function captureAdvisorFocus() {
@@ -806,6 +904,7 @@ function isAshareTradingAutoRefreshTime(now = new Date()) {
 }
 
 function requestAutoRefresh(scope = "home") {
+  if (!isAppAuthenticated()) return;
   if (!isAshareTradingAutoRefreshTime()) return;
   if (hasOpenOverlay()) {
     pendingAutoRefresh.add(scope);
@@ -930,12 +1029,10 @@ async function adminFetch(path, options = {}) {
 
 function handleAdminRequired(error) {
   if (error.status !== 401 && !["ADMIN_AUTH_REQUIRED", "ADMIN_SETUP_REQUIRED"].includes(error.code)) return false;
-  sessionStorage.removeItem("guanlanAdminToken");
-  sessionStorage.removeItem("guanlanAdminHoldingsAuthorized");
+  clearAppSession();
   update({
     adminAuthToken: "",
     adminHoldingsAuthorized: false,
-    portfolioLocked: true,
     portfolioLoading: false,
     portfolioRows: [],
     portfolioSummary: null,
@@ -1123,6 +1220,11 @@ async function recognizePositionImage(file) {
 }
 
 async function analyzePortfolioText(textOverride = null) {
+  if (state.portfolioTextComposing) {
+    showToast("中文输入尚未完成，请先确认候选词");
+    focusPortfolioText();
+    return;
+  }
   const liveText = textOverride ?? document.querySelector("[data-portfolio-text]")?.value;
   if (liveText !== undefined) state.portfolioText = liveText;
   update({ portfolioLoading: true, error: "" });
@@ -1169,7 +1271,6 @@ async function loadHoldings({ silent = false } = {}) {
   if (!silent) update({ portfolioLoading: true, error: "" });
   try {
     const json = await adminFetch("/api/holdings?fast=1");
-    update({ portfolioLocked: false });
     applyPortfolioPayload(json.data, json.updatedAt, silent ? state.ocrProgress : "");
   } catch (error) {
     if (handleAdminRequired(error)) return;
@@ -1188,45 +1289,12 @@ async function loadAdminStatus() {
     update({
       adminStatus: json.data,
       adminHoldingsAuthorized: Boolean(json.data?.authenticated),
-      portfolioLocked: Boolean(json.data?.hasHoldings && !json.data?.authenticated),
       portfolioSavedAt: json.data?.holdingsUpdatedAt || state.portfolioSavedAt
     });
     return json.data;
   } catch (error) {
     update({ error: error.message });
     return null;
-  }
-}
-
-async function unlockPortfolio() {
-  const password = String(document.querySelector("[data-admin-password]")?.value || state.adminPasswordInput || "").trim();
-  if (!password) {
-    showToast("请输入管理员密码");
-    return;
-  }
-  update({ adminUnlocking: true, error: "" });
-  try {
-    const res = await fetch("/api/admin/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password })
-    });
-    const json = await res.json();
-    if (!json.ok) throw new Error(json.error || "管理员密码错误");
-    sessionStorage.setItem("guanlanAdminToken", json.data.token);
-    sessionStorage.setItem("guanlanAdminHoldingsAuthorized", "1");
-    update({
-      adminAuthToken: json.data.token,
-      adminHoldingsAuthorized: true,
-      adminStatus: { ...(state.adminStatus || {}), ...json.data, authenticated: true },
-      adminPasswordInput: "",
-      adminUnlocking: false,
-      portfolioLocked: false
-    });
-    showToast("已解锁我的持股");
-    loadHoldings();
-  } catch (error) {
-    update({ adminUnlocking: false, error: error.message });
   }
 }
 
@@ -1405,8 +1473,7 @@ async function saveSettings() {
       });
       const passwordJson = await passwordRes.json();
       if (!passwordJson.ok) throw new Error(passwordJson.error || "管理员密码修改失败");
-      sessionStorage.removeItem("guanlanAdminToken");
-      sessionStorage.removeItem("guanlanAdminHoldingsAuthorized");
+      clearAppSession();
       state.adminAuthToken = "";
       state.adminHoldingsAuthorized = false;
       state.adminStatus = passwordJson.data;
@@ -1470,79 +1537,7 @@ async function sendAdvisorMessage(contentOverride = "") {
     return;
   }
   const nextMessages = [...state.advisorMessages, { role: "user", content }];
-  if (await maybePromptAdvisorHoldingsAuth(content, nextMessages)) return;
   sendAdvisorMessages(nextMessages);
-}
-
-async function maybePromptAdvisorHoldingsAuth(content, nextMessages) {
-  if (!shouldRequestHoldingsAuth({ text: content, hasHoldings: true, authenticated: state.adminHoldingsAuthorized })) return false;
-  const statusJson = await adminFetch("/api/admin/status").catch(() => null);
-  const status = statusJson?.data || state.adminStatus || {};
-  const authenticated = Boolean(status.authenticated);
-  update({
-    adminStatus: status,
-    adminHoldingsAuthorized: authenticated
-  });
-  if (!shouldRequestHoldingsAuth({ text: content, hasHoldings: Boolean(status.hasHoldings), authenticated })) return false;
-  const prompt = {
-    role: "assistant",
-    content: holdingsUnauthorizedMessage({ hasAdminPassword: status.hasAdminPassword !== false }),
-    authPrompt: true,
-    hasAdminPassword: status.hasAdminPassword !== false
-  };
-  update({
-    advisorMessages: [...nextMessages, prompt],
-    advisorInput: "",
-    advisorAuthPrompt: { pendingMessages: nextMessages },
-    advisorAuthPassword: "",
-    advisorAuthError: "",
-    advisorAuthLoading: false,
-    error: ""
-  });
-  scrollChatToBottom({ smooth: true });
-  setTimeout(() => {
-    const input = document.querySelector("[data-advisor-auth-password]");
-    input?.focus({ preventScroll: true });
-  }, 60);
-  return true;
-}
-
-async function verifyAdvisorHoldingsAuth() {
-  const password = String(document.querySelector("[data-advisor-auth-password]")?.value || state.advisorAuthPassword || "").trim();
-  if (!password) {
-    update({ advisorAuthError: "请输入管理员密码" });
-    return;
-  }
-  update({ advisorAuthLoading: true, advisorAuthError: "" });
-  try {
-    const res = await fetch("/api/admin/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password })
-    });
-    const json = await res.json();
-    if (!json.ok) throw new Error(json.error || "没有管理员授权，暂时不能读取我的持股数据。");
-    sessionStorage.setItem("guanlanAdminToken", json.data.token);
-    sessionStorage.setItem("guanlanAdminHoldingsAuthorized", "1");
-    const pendingMessages = state.advisorAuthPrompt?.pendingMessages || [];
-    update({
-      adminAuthToken: json.data.token,
-      adminHoldingsAuthorized: true,
-      adminStatus: { ...(state.adminStatus || {}), ...json.data, authenticated: true },
-      advisorAuthPrompt: null,
-      advisorAuthPassword: "",
-      advisorAuthLoading: false,
-      advisorAuthError: "",
-      advisorMessages: state.advisorMessages.filter((message) => !message.authPrompt)
-    });
-    showToast("管理员授权已通过");
-    if (pendingMessages.length) sendAdvisorMessages(pendingMessages);
-  } catch (error) {
-    update({
-      advisorAuthLoading: false,
-      advisorAuthError: "没有管理员授权，暂时不能读取我的持股数据。"
-    });
-  }
 }
 
 async function sendAdvisorMessages(nextMessages) {
@@ -1686,10 +1681,6 @@ function clearAdvisorChat() {
   update({
     advisorInput: "",
     advisorContexts: [],
-    advisorAuthPrompt: null,
-    advisorAuthPassword: "",
-    advisorAuthLoading: false,
-    advisorAuthError: "",
     advisorMessages: [advisorWelcomeMessage]
   });
 }
@@ -1836,6 +1827,30 @@ function buildRecommendationReason(stock, advice) {
 
 function isTrackedStock(code = "") {
   return Boolean(code && (state.trackingRows || []).some((item) => item.code === code));
+}
+
+function appLoginPage() {
+  return `
+    <main class="app-auth-page">
+      <section class="app-auth-card">
+        <div class="brand auth-brand">
+          <span class="brand-mark"><img src="./assets/guanlan-icon.png" alt="" /></span>
+          <span class="brand-copy"><strong>观澜</strong><small>A Stock Radar</small></span>
+        </div>
+        <div>
+          <span class="auth-eyebrow">身份验证</span>
+          <h1>输入管理员密码后进入观澜</h1>
+          <p>为了保护持仓、成本价和模型 AK，本浏览器会话需要先完成一次管理员验证。</p>
+        </div>
+        <label>
+          <span>管理员密码</span>
+          <input type="password" data-app-password value="${escapeHtml(state.appPasswordInput || "")}" placeholder="输入管理员密码" autocomplete="current-password" />
+        </label>
+        ${state.appAuthError ? `<div class="form-error">${escapeHtml(state.appAuthError)}</div>` : ""}
+        <button class="primary auth-submit" data-action="verify-app-access" ${state.appAuthLoading ? "disabled" : ""}>${state.appAuthLoading ? "验证中..." : "进入观澜"}</button>
+      </section>
+    </main>
+  `;
 }
 
 function shell(content) {
@@ -2622,7 +2637,6 @@ function discussionPage() {
             <div class="chat-message ${message.role}">
               <span>${message.role === "user" ? "你" : "观澜理财师"}</span>
               <div class="chat-bubble" data-chat-content="${index}">${formatChatText(message.content)}${message.streaming ? `<span class="typing-cursor"></span>` : ""}</div>
-              ${advisorAuthPanel(message)}
               ${advisorChoicePanel(message, index)}
             </div>
           `).join("")}
@@ -2668,34 +2682,6 @@ function advisorLoadingView(deepThinking = false) {
           `).join("")}
         </div>
       </div>
-    </div>
-  `;
-}
-
-function advisorAuthPanel(message = {}) {
-  if (!message.authPrompt) return "";
-  if (message.hasAdminPassword === false) {
-    return `
-      <div class="advisor-auth-panel">
-        <div>
-          <strong>需要初始化管理员密码</strong>
-          <span>完成后才能在个股讨论中读取我的持股。</span>
-        </div>
-        <button class="primary" data-page="settings">去设置</button>
-      </div>
-    `;
-  }
-  return `
-    <div class="advisor-auth-panel">
-      <div>
-        <strong>管理员验证</strong>
-        <span>通过后，本浏览器 session 内访问我的持股和个股讨论都不再重复验证。</span>
-      </div>
-      <div class="advisor-auth-form">
-        <input type="password" data-advisor-auth-password value="${escapeHtml(state.advisorAuthPassword || "")}" placeholder="输入管理员密码" autocomplete="current-password" />
-        <button class="primary" data-action="verify-advisor-holdings-auth" ${state.advisorAuthLoading ? "disabled" : ""}>${state.advisorAuthLoading ? "验证中..." : "验证并继续"}</button>
-      </div>
-      ${state.advisorAuthError ? `<small class="advisor-auth-error">${escapeHtml(state.advisorAuthError)}</small>` : ""}
     </div>
   `;
 }
@@ -3093,7 +3079,6 @@ function settingsPage() {
 
 function portfolioPage() {
   const summary = state.portfolioSummary;
-  if (state.portfolioLocked) return portfolioLockedView();
   return `
     <section class="portfolio-action-bar">
       <div>
@@ -3117,33 +3102,6 @@ function portfolioPage() {
         </div>
       </div>
       ${state.portfolioLoading && !state.modalPortfolioUpdate ? loadingView() : state.portfolioRows.length ? portfolioResult(state.portfolioRows, state.portfolioSummary) : `<div class="empty">点击“更新持股”上传截图后，这里会显示持股诊断和每只股票做T建议。</div>`}
-    </section>
-  `;
-}
-
-function portfolioLockedView() {
-  const updatedAt = state.adminStatus?.holdingsUpdatedAt || state.portfolioSavedAt;
-  const needsSetup = state.adminStatus && state.adminStatus.hasAdminPassword === false;
-  return `
-    <section class="portfolio-lock panel">
-      <div class="portfolio-lock-card">
-        <div class="portfolio-lock-mark">${icons.lock || icons.settings}</div>
-        <div>
-          <span>我的持股已保护</span>
-          <h2>${needsSetup ? "请先设置管理员密码" : "请输入管理员密码"}</h2>
-          <p>${needsSetup ? "检测到历史持股，但当前应用还没有管理员密码。请先到设置页创建管理员密码，然后再回到我的持股解锁。" : "检测到本地保存过历史持股数据。为保护成本价、持有数量和仓位建议，进入前需要先完成管理员验证。"}</p>
-          ${updatedAt ? `<small>历史持股最近更新：${new Date(updatedAt).toLocaleString("zh-CN")}</small>` : ""}
-        </div>
-        ${needsSetup ? "" : `<label>
-          <span>管理员密码</span>
-          <input type="password" data-admin-password value="${escapeHtml(state.adminPasswordInput || "")}" placeholder="输入部署时设置的管理员密码" autocomplete="current-password" />
-        </label>`}
-        <div class="portfolio-lock-actions">
-          ${needsSetup
-            ? `<button class="primary" data-page="settings">去设置管理员密码</button>`
-            : `<button class="primary" data-action="unlock-portfolio" ${state.adminUnlocking ? "disabled" : ""}>${state.adminUnlocking ? "验证中..." : "解锁我的持股"}</button>`}
-        </div>
-      </div>
     </section>
   `;
 }
@@ -4495,8 +4453,17 @@ function drawIndexChart(index) {
 }
 
 function render(scrollAnchor = captureScrollAnchors()) {
+  if (!isAppAuthenticated()) {
+    app.innerHTML = appLoginPage();
+    focusAppPassword();
+    return;
+  }
   if (isAdvisorComposingActive()) {
     advisorDeferredRender = true;
+    return;
+  }
+  if (isPortfolioTextComposingActive()) {
+    portfolioTextDeferredRender = true;
     return;
   }
   const advisorFocus = skipAdvisorFocusRestoreOnce ? null : captureAdvisorFocus();
@@ -4626,13 +4593,12 @@ app.addEventListener("click", (event) => {
   }
   if (event.target.closest("[data-action='refresh-tracking']")) loadTracking({ force: true });
   if (event.target.closest("[data-action='analyze-portfolio']")) analyzePortfolioText();
-  if (event.target.closest("[data-action='unlock-portfolio']")) unlockPortfolio();
+  if (event.target.closest("[data-action='verify-app-access']")) verifyAppAccess();
   if (event.target.closest("[data-action='open-portfolio-update']")) update({ modalPortfolioUpdate: true, ocrProgress: "" });
   if (event.target.closest("[data-action='reload-portfolio']")) loadHoldings();
   if (event.target.closest("[data-action='clear-portfolio']")) clearHoldings();
   if (event.target.closest("[data-action='save-settings']")) saveSettings();
   if (event.target.closest("[data-action='send-advisor-message']")) sendAdvisorMessage();
-  if (event.target.closest("[data-action='verify-advisor-holdings-auth']")) verifyAdvisorHoldingsAuth();
   if (event.target.closest("[data-action='clear-advisor-chat']")) clearAdvisorChat();
   if (event.target.closest("[data-action='toggle-advisor-thinking']")) setAdvisorDeepThinking(!state.advisorDeepThinking);
   const choiceOption = event.target.closest("[data-choice-option]");
@@ -4717,11 +4683,13 @@ app.addEventListener("change", (event) => {
 });
 
 app.addEventListener("input", (event) => {
+  if (event.target.matches("[data-app-password]")) {
+    state.appPasswordInput = event.target.value;
+    state.appAuthError = "";
+  }
   if (event.target.matches("[data-portfolio-text]")) {
     state.portfolioText = event.target.value;
-  }
-  if (event.target.matches("[data-admin-password]")) {
-    state.adminPasswordInput = event.target.value;
+    if (event.isComposing || state.portfolioTextComposing) return;
   }
   if (event.target.matches("[data-sector-search]")) {
     state.sectorSearchDraft = event.target.value;
@@ -4750,14 +4718,14 @@ app.addEventListener("input", (event) => {
   if (event.target.matches("[data-advisor-input]")) {
     state.advisorInput = event.target.value;
   }
-  if (event.target.matches("[data-advisor-auth-password]")) {
-    state.advisorAuthPassword = event.target.value;
-  }
 });
 
 app.addEventListener("compositionstart", (event) => {
   if (event.target.matches("[data-advisor-input]")) {
     state.advisorComposing = true;
+  }
+  if (event.target.matches("[data-portfolio-text]")) {
+    state.portfolioTextComposing = true;
   }
   if (event.target.matches("[data-tracking-search]")) {
     state.trackingSearchComposing = true;
@@ -4772,6 +4740,18 @@ app.addEventListener("compositionend", (event) => {
       advisorDeferredRender = false;
       render();
       focusAdvisorInput();
+    }
+  }
+  if (event.target.matches("[data-portfolio-text]")) {
+    const value = event.target.value;
+    const start = event.target.selectionStart ?? value.length;
+    const end = event.target.selectionEnd ?? start;
+    state.portfolioTextComposing = false;
+    state.portfolioText = value;
+    if (portfolioTextDeferredRender) {
+      portfolioTextDeferredRender = false;
+      render();
+      focusPortfolioText({ value, start, end });
     }
   }
   if (event.target.matches("[data-tracking-search]")) {
@@ -4791,9 +4771,9 @@ app.addEventListener("compositionend", (event) => {
 });
 
 app.addEventListener("keydown", (event) => {
-  if (event.target.matches("[data-admin-password]") && event.key === "Enter") {
+  if (event.target.matches("[data-app-password]") && event.key === "Enter") {
     event.preventDefault();
-    unlockPortfolio();
+    verifyAppAccess();
   }
 });
 
@@ -4811,10 +4791,6 @@ app.addEventListener("keydown", (event) => {
     if (state.advisorLoading || state.advisorStreaming) return;
     event.preventDefault();
     sendAdvisorMessage();
-  }
-  if (event.target.matches("[data-advisor-auth-password]") && event.key === "Enter") {
-    event.preventDefault();
-    verifyAdvisorHoldingsAuth();
   }
 });
 
@@ -4870,13 +4846,13 @@ window.addEventListener("resize", () => {
 window.addEventListener("scroll", () => {
   if (suppressScrollTracking) return;
   scrollGeneration += 1;
+  rememberPageScroll();
 }, { passive: true });
 
 render();
-loadSectors();
-loadTracking({ silent: true });
+startAppDataOnce();
 setInterval(() => requestAutoRefresh("home"), homeRefreshMs);
 setInterval(() => requestAutoRefresh("recommend"), recommendRefreshMs);
 setInterval(() => {
-  if (state.page === "tracking") loadTracking({ force: true, silent: true });
+  if (isAppAuthenticated() && state.page === "tracking") loadTracking({ force: true, silent: true });
 }, recommendRefreshMs);
