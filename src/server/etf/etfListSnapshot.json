@@ -1,0 +1,371 @@
+{
+  "updatedAt": "2026-06-22T15:15:42.055Z",
+  "etfs": [
+    {
+      "name": "养殖ETF华泰柏瑞",
+      "code": "159007",
+      "market": 0,
+      "symbol": "sz159007"
+    },
+    {
+      "name": "恒生生物科技ETF华泰柏瑞",
+      "code": "513930",
+      "market": 1,
+      "symbol": "sh513930"
+    },
+    {
+      "name": "家居家电ETF华泰柏瑞",
+      "code": "512430",
+      "market": 1,
+      "symbol": "sh512430"
+    },
+    {
+      "name": "证券ETF华泰柏瑞",
+      "code": "560400",
+      "market": 1,
+      "symbol": "sh560400"
+    },
+    {
+      "name": "科创创业人工智能ETF华泰柏瑞",
+      "code": "159139",
+      "market": 0,
+      "symbol": "sz159139"
+    },
+    {
+      "name": "工业有色ETF华泰柏瑞",
+      "code": "560490",
+      "market": 1,
+      "symbol": "sh560490"
+    },
+    {
+      "name": "工程机械ETF华泰柏瑞",
+      "code": "561030",
+      "market": 1,
+      "symbol": "sh561030"
+    },
+    {
+      "name": "电池ETF华泰柏瑞",
+      "code": "560910",
+      "market": 1,
+      "symbol": "sh560910"
+    },
+    {
+      "name": "银行ETF华泰柏瑞",
+      "code": "560670",
+      "market": 1,
+      "symbol": "sh560670"
+    },
+    {
+      "name": "红利ETF华泰柏瑞",
+      "code": "510880",
+      "market": 1,
+      "symbol": "sh510880"
+    },
+    {
+      "name": "沪深300ETF华泰柏瑞",
+      "code": "510300",
+      "market": 1,
+      "symbol": "sh510300"
+    },
+    {
+      "name": "中证500ETF华泰柏瑞",
+      "code": "512510",
+      "market": 1,
+      "symbol": "sh512510"
+    },
+    {
+      "name": "MSCI中国ETF华泰柏瑞",
+      "code": "512520",
+      "market": 1,
+      "symbol": "sh512520"
+    },
+    {
+      "name": "红利低波ETF华泰柏瑞",
+      "code": "512890",
+      "market": 1,
+      "symbol": "sh512890"
+    },
+    {
+      "name": "科技100ETF华泰柏瑞",
+      "code": "515580",
+      "market": 1,
+      "symbol": "sh515580"
+    },
+    {
+      "name": "科创50ETF华泰柏瑞",
+      "code": "588090",
+      "market": 1,
+      "symbol": "sh588090"
+    },
+    {
+      "name": "光伏ETF华泰柏瑞",
+      "code": "515790",
+      "market": 1,
+      "symbol": "sh515790"
+    },
+    {
+      "name": "港股通50ETF华泰柏瑞",
+      "code": "513550",
+      "market": 1,
+      "symbol": "sh513550"
+    },
+    {
+      "name": "互联网ETF华泰柏瑞",
+      "code": "517050",
+      "market": 1,
+      "symbol": "sh517050"
+    },
+    {
+      "name": "智能驾驶ETF华泰柏瑞",
+      "code": "516520",
+      "market": 1,
+      "symbol": "sh516520"
+    },
+    {
+      "name": "游戏ETF华泰柏瑞",
+      "code": "516770",
+      "market": 1,
+      "symbol": "sh516770"
+    },
+    {
+      "name": "稀土ETF华泰柏瑞",
+      "code": "516780",
+      "market": 1,
+      "symbol": "sh516780"
+    },
+    {
+      "name": "中证1000ETF华泰柏瑞",
+      "code": "516300",
+      "market": 1,
+      "symbol": "sh516300"
+    },
+    {
+      "name": "物联网ETF华泰柏瑞",
+      "code": "516330",
+      "market": 1,
+      "symbol": "sh516330"
+    },
+    {
+      "name": "恒生科技ETF华泰柏瑞",
+      "code": "513130",
+      "market": 1,
+      "symbol": "sh513130"
+    },
+    {
+      "name": "漂亮50ETF华泰柏瑞",
+      "code": "561500",
+      "market": 1,
+      "symbol": "sh561500"
+    },
+    {
+      "name": "创新药ETF华泰柏瑞",
+      "code": "517120",
+      "market": 1,
+      "symbol": "sh517120"
+    },
+    {
+      "name": "医疗ETF华泰柏瑞",
+      "code": "516790",
+      "market": 1,
+      "symbol": "sh516790"
+    },
+    {
+      "name": "创业板科技ETF华泰柏瑞",
+      "code": "159773",
+      "market": 0,
+      "symbol": "sz159773"
+    },
+    {
+      "name": "品牌消费ETF华泰柏瑞",
+      "code": "517880",
+      "market": 1,
+      "symbol": "sh517880"
+    },
+    {
+      "name": "云计算ETF华泰柏瑞",
+      "code": "159738",
+      "market": 0,
+      "symbol": "sz159738"
+    },
+    {
+      "name": "港股通科技ETF华泰柏瑞",
+      "code": "513150",
+      "market": 1,
+      "symbol": "sh513150"
+    },
+    {
+      "name": "中证500增强ETF华泰柏瑞",
+      "code": "561550",
+      "market": 1,
+      "symbol": "sh561550"
+    },
+    {
+      "name": "港股通红利ETF华泰柏瑞",
+      "code": "513530",
+      "market": 1,
+      "symbol": "sh513530"
+    },
+    {
+      "name": "纳指ETF华泰柏瑞",
+      "code": "513110",
+      "market": 1,
+      "symbol": "sh513110"
+    },
+    {
+      "name": "电力ETF华泰柏瑞",
+      "code": "561560",
+      "market": 1,
+      "symbol": "sh561560"
+    },
+    {
+      "name": "中药ETF华泰柏瑞",
+      "code": "561510",
+      "market": 1,
+      "symbol": "sh561510"
+    },
+    {
+      "name": "中韩半导体ETF华泰柏瑞",
+      "code": "513310",
+      "market": 1,
+      "symbol": "sh513310"
+    },
+    {
+      "name": "中证1000增强ETF华泰柏瑞",
+      "code": "561590",
+      "market": 1,
+      "symbol": "sh561590"
+    },
+    {
+      "name": "港股通金融ETF华泰柏瑞",
+      "code": "513140",
+      "market": 1,
+      "symbol": "sh513140"
+    },
+    {
+      "name": "央企红利ETF华泰柏瑞",
+      "code": "561580",
+      "market": 1,
+      "symbol": "sh561580"
+    },
+    {
+      "name": "中证2000ETF华泰柏瑞",
+      "code": "563300",
+      "market": 1,
+      "symbol": "sh563300"
+    },
+    {
+      "name": "A股ETF华泰柏瑞",
+      "code": "563330",
+      "market": 1,
+      "symbol": "sh563330"
+    },
+    {
+      "name": "东南亚科技ETF华泰柏瑞",
+      "code": "513730",
+      "market": 1,
+      "symbol": "sh513730"
+    },
+    {
+      "name": "科创100ETF华泰柏瑞",
+      "code": "588880",
+      "market": 1,
+      "symbol": "sh588880"
+    },
+    {
+      "name": "A50ETF华泰柏瑞",
+      "code": "563350",
+      "market": 1,
+      "symbol": "sh563350"
+    },
+    {
+      "name": "沙特ETF华泰柏瑞",
+      "code": "520830",
+      "market": 1,
+      "symbol": "sh520830"
+    },
+    {
+      "name": "油气ETF华泰柏瑞",
+      "code": "561570",
+      "market": 1,
+      "symbol": "sh561570"
+    },
+    {
+      "name": "恒生消费ETF华泰柏瑞",
+      "code": "520520",
+      "market": 1,
+      "symbol": "sh520520"
+    },
+    {
+      "name": "港股通红利低波ETF华泰柏瑞",
+      "code": "520890",
+      "market": 1,
+      "symbol": "sh520890"
+    },
+    {
+      "name": "恒生创新药ETF华泰柏瑞",
+      "code": "520500",
+      "market": 1,
+      "symbol": "sh520500"
+    },
+    {
+      "name": "A500ETF华泰柏瑞",
+      "code": "563360",
+      "market": 1,
+      "symbol": "sh563360"
+    },
+    {
+      "name": "科创200ETF华泰柏瑞",
+      "code": "588230",
+      "market": 1,
+      "symbol": "sh588230"
+    },
+    {
+      "name": "上证180ETF华泰柏瑞",
+      "code": "530300",
+      "market": 1,
+      "symbol": "sh530300"
+    },
+    {
+      "name": "创业板50ETF华泰柏瑞",
+      "code": "159383",
+      "market": 0,
+      "symbol": "sz159383"
+    },
+    {
+      "name": "科创综指ETF华泰柏瑞",
+      "code": "589990",
+      "market": 1,
+      "symbol": "sh589990"
+    },
+    {
+      "name": "全指现金流ETF华泰柏瑞",
+      "code": "563390",
+      "market": 1,
+      "symbol": "sh563390"
+    },
+    {
+      "name": "科创半导体设备ETF华泰柏瑞",
+      "code": "588710",
+      "market": 1,
+      "symbol": "sh588710"
+    },
+    {
+      "name": "通用航空ETF华泰柏瑞",
+      "code": "563320",
+      "market": 1,
+      "symbol": "sh563320"
+    },
+    {
+      "name": "航空航天ETF华泰柏瑞",
+      "code": "563380",
+      "market": 1,
+      "symbol": "sh563380"
+    },
+    {
+      "name": "科创债ETF华泰柏瑞",
+      "code": "551510",
+      "market": 1,
+      "symbol": "sh551510"
+    }
+  ]
+}

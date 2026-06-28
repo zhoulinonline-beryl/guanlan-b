@@ -80,6 +80,14 @@ const state = {
   virtualTradingInitAmount: "",
   virtualTradingError: "",
   virtualTradingTab: "live",
+  etfStrategy: null,
+  etfStrategyLoading: false,
+  etfStrategyError: "",
+  concentration: null,
+  concentrationLoading: false,
+  concentrationError: "",
+  concentrationHistoryWindow: 60,
+  concentrationHistory: [],
   virtualBacktestStart: "",
   virtualBacktestEnd: "",
   virtualBacktestTradePages: {},
@@ -104,6 +112,8 @@ const state = {
   adminStatus: null,
   portfolioText: "",
   portfolioTextComposing: false,
+  portfolioManualHoldings: [],
+  portfolioManualComposing: false,
   portfolioRows: [],
   portfolioSummary: null,
   portfolioParser: "",
@@ -120,6 +130,7 @@ const state = {
   fullscreenStockChart: false,
   fullscreenStockChartData: null,
   modalIndex: null,
+  modalEtf: null,
   loading: true,
   stockLoading: false,
   recLoading: false,
@@ -201,7 +212,9 @@ const icons = {
   copy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
   settings: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-.4-1.1 1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.1-.4 1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 .4 1.1 1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.2.38.6.6 1 .6h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1 .6Z"/></svg>`,
   chat: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 9h8"/><path d="M8 13h5"/></svg>`,
-  arrow: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>`
+  arrow: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>`,
+  etf: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h10"/><path d="M7 12h10"/><path d="M7 17h6"/></svg>`,
+  indicator: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 12 12"/><path d="M12 12 6 22"/><path d="M12 12 18 22"/><path d="M12 12 4 10"/><path d="M12 12 20 10"/></svg>`
 };
 
 function update(patch) {
@@ -256,6 +269,8 @@ function startAppDataOnce() {
   loadSectors();
   loadTracking({ silent: true });
   loadVirtualTrading({ silent: true });
+  loadEtfStrategy({ silent: true });
+  loadConcentration({ silent: true });
   loadAdminStatus();
 }
 
@@ -972,7 +987,7 @@ function buildPositionBullGateAdvice(stock = {}) {
 }
 
 function hasOpenOverlay() {
-  return Boolean(state.modalStock || state.modalIndex || state.modalSectorId || state.modalPortfolioUpdate);
+  return Boolean(state.modalStock || state.modalIndex || state.modalSectorId || state.modalPortfolioUpdate || state.modalEtf);
 }
 
 function chinaMarketNow(now = new Date()) {
@@ -1167,6 +1182,8 @@ function closeTopOverlay() {
     update({ modalStock: null, fullscreenStockChartData: null });
   } else if (state.modalIndex) {
     update({ modalIndex: null });
+  } else if (state.modalEtf) {
+    update({ modalEtf: null });
   } else if (state.modalSectorId) {
     update({ modalSectorId: "" });
   } else if (state.modalPortfolioUpdate) {
@@ -1257,6 +1274,7 @@ async function loadSectors({ silent = false, clearStockCache = false, deferForOv
     setTimeout(() => ensureSectorStockIndex(), 0);
     if (state.page === "sector") loadStocks(state.selectedSectorId);
     if (state.page === "recommend") loadRecommendations();
+    if (state.page === "indicator") loadConcentration();
   } catch (error) {
     update({ loading: false, error: error.message });
   }
@@ -1369,6 +1387,28 @@ async function openIndex(symbol) {
   }
 }
 
+async function openEtf(code) {
+  const etf = state.etfStrategy?.mediumTop5?.find((item) => item.code === code)
+    || state.etfStrategy?.shortTop5?.find((item) => item.code === code);
+  if (!etf) return;
+  update({ modalEtf: { ...etf, candles: [], quote: null, product: null, loading: true, error: "" } });
+  try {
+    const [klineResult, quoteResult, productResult] = await Promise.allSettled([
+      api(`/api/kline?code=${etf.code}&market=${etf.market}`),
+      api(`/api/quote?code=${etf.code}&market=${etf.market}`),
+      api(`/api/etf-product?code=${etf.code}`)
+    ]);
+    const next = { ...state.modalEtf, loading: false };
+    if (klineResult.status === "fulfilled") next.candles = klineResult.value.data?.klines || [];
+    else next.candles = [];
+    if (quoteResult.status === "fulfilled") next.quote = quoteResult.value.data || null;
+    if (productResult.status === "fulfilled") next.product = productResult.value.data?.product || null;
+    update({ modalEtf: next });
+  } catch (error) {
+    update({ modalEtf: { ...state.modalEtf, loading: false, error: error.message } });
+  }
+}
+
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1406,6 +1446,31 @@ async function recognizePositionImage(file) {
   }
 }
 
+function addManualHoldingRow() {
+  update({
+    portfolioManualHoldings: [...state.portfolioManualHoldings, { name: "", code: "", cost: "", qty: "" }]
+  });
+}
+
+function removeManualHoldingRow(index) {
+  const next = state.portfolioManualHoldings.filter((_, i) => i !== index);
+  update({ portfolioManualHoldings: next.length ? next : [{ name: "", code: "", cost: "", qty: "" }] });
+}
+
+function updateManualHoldingFromDom() {
+  const rows = [];
+  document.querySelectorAll("[data-manual-row]").forEach((el) => {
+    const index = Number(el.dataset.manualRow);
+    rows[index] = {
+      name: el.querySelector("[data-manual-name]")?.value || "",
+      code: el.querySelector("[data-manual-code]")?.value || "",
+      cost: el.querySelector("[data-manual-cost]")?.value || "",
+      qty: el.querySelector("[data-manual-qty]")?.value || ""
+    };
+  });
+  return rows.filter(Boolean);
+}
+
 async function analyzePortfolioText(textOverride = null) {
   if (state.portfolioTextComposing) {
     showToast("中文输入尚未完成，请先确认候选词");
@@ -1416,11 +1481,34 @@ async function analyzePortfolioText(textOverride = null) {
   if (liveText !== undefined) state.portfolioText = liveText;
   update({ portfolioLoading: true, error: "" });
   try {
-    const res = await fetch("/api/holdings/import-text", {
-      method: "POST",
-      headers: adminHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ text: state.portfolioText })
-    });
+    let res;
+    let progressMsg;
+    if (state.portfolioText.trim()) {
+      res = await fetch("/api/holdings/import-text", {
+        method: "POST",
+        headers: adminHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ text: state.portfolioText })
+      });
+      progressMsg = "文本已解析并保存为我的持股";
+    } else {
+      const manualHoldings = updateManualHoldingFromDom()
+        .map((row) => ({
+          name: row.name.trim(),
+          code: row.code.trim(),
+          cost: row.cost ? Number(row.cost) : null,
+          qty: row.qty ? Number(row.qty) : null
+        }))
+        .filter((row) => row.name || row.code);
+      if (!manualHoldings.length) {
+        throw new Error("请输入文本或至少填写一条手工持股");
+      }
+      res = await fetch("/api/holdings/import-manual", {
+        method: "POST",
+        headers: adminHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ holdings: manualHoldings })
+      });
+      progressMsg = "手工输入已保存为我的持股";
+    }
     const json = await res.json();
     if (!json.ok) {
       const error = new Error(json.error || "仓位分析失败");
@@ -1429,8 +1517,9 @@ async function analyzePortfolioText(textOverride = null) {
       throw error;
     }
     const payload = Array.isArray(json.data) ? { rows: json.data, summary: null, parser: "rules" } : json.data || {};
-    applyPortfolioPayload(payload, json.updatedAt, payload.rows?.length ? "文本已解析并保存为我的持股" : state.ocrProgress);
+    applyPortfolioPayload(payload, json.updatedAt, payload.rows?.length ? progressMsg : state.ocrProgress);
     if (payload.rows?.length) {
+      update({ portfolioManualHoldings: [], portfolioText: "" });
       setTimeout(() => {
         if (!state.portfolioLoading && state.modalPortfolioUpdate) update({ modalPortfolioUpdate: false });
       }, 700);
@@ -1695,6 +1784,90 @@ async function loadVirtualTrading({ force = false, silent = false } = {}) {
     });
   } catch (error) {
     update({ virtualTradingLoading: false, virtualTradingError: error.message, error: error.message });
+  }
+}
+
+async function loadEtfStrategy({ force = false, silent = false } = {}) {
+  if (!silent) update({ etfStrategyLoading: true, etfStrategyError: "", error: "" });
+  try {
+    const json = await api(force ? "/api/etf-strategy/refresh" : "/api/etf-strategy", { method: force ? "POST" : "GET" });
+    update({
+      etfStrategy: json.data || null,
+      etfStrategyLoading: false,
+      etfStrategyError: "",
+      updatedAt: json.updatedAt || state.updatedAt
+    });
+  } catch (error) {
+    update({ etfStrategyLoading: false, etfStrategyError: error.message, error: error.message });
+  }
+}
+
+async function loadConcentration({ force = false, silent = false } = {}) {
+  if (!silent) update({ concentrationLoading: true, concentrationError: "", error: "" });
+  try {
+    const window = state.concentrationHistoryWindow;
+    const json = await api(`/api/indicator/concentration?window=${window}${force ? "&force=1" : ""}`);
+    const data = json.data || {};
+    update({
+      concentration: data,
+      concentrationHistory: data.history || [],
+      concentrationLoading: false,
+      concentrationError: "",
+      updatedAt: data.updatedAt || state.updatedAt
+    });
+  } catch (error) {
+    update({ concentrationLoading: false, concentrationError: error.message, error: error.message });
+  }
+}
+
+async function loadConcentrationHistory(window = state.concentrationHistoryWindow) {
+  try {
+    const json = await api(`/api/indicator/concentration/history?window=${window}`);
+    update({ concentrationHistory: (json.data || {}).records || [] });
+  } catch (error) {
+    console.warn("加载历史集中度失败:", error.message);
+  }
+}
+
+async function refreshConcentrationHistory() {
+  update({ concentrationLoading: true, concentrationError: "" });
+  try {
+    await api("/api/indicator/concentration/archive", { method: "POST" });
+    await loadConcentration({ force: true });
+    showToast("历史数据已刷新");
+  } catch (error) {
+    update({ concentrationLoading: false, concentrationError: error.message });
+  }
+}
+
+async function analyzeConcentration() {
+  const concentration = state.concentration;
+  if (!concentration) return;
+  update({ concentrationLoading: true, concentrationError: "" });
+  try {
+    const json = await api("/api/indicator/concentration/analyze", {
+      method: "POST",
+      body: JSON.stringify({
+        dimensions: concentration.dimensions,
+        history: state.concentrationHistory,
+        industryDistribution: concentration.industryDistribution,
+        possibilities: concentration.possibilities,
+        updatedAt: concentration.updatedAt
+      })
+    });
+    const result = json.data || {};
+    update({
+      concentration: {
+        ...concentration,
+        possibilities: result.possibilities || concentration.possibilities,
+        trendSummary: result.trendSummary || concentration.trendSummary,
+        aiNote: result.note || ""
+      },
+      concentrationLoading: false,
+      concentrationError: ""
+    });
+  } catch (error) {
+    update({ concentrationLoading: false, concentrationError: error.message });
   }
 }
 
@@ -2386,6 +2559,8 @@ function shell(content) {
   const titles = {
     home: ["全景雷达", "主要指数、板块行情、主力方向与雷达解释合并呈现"],
     recommend: ["股票推荐", "主力方向明显且适合当下建仓的跨板块候选"],
+    indicator: ["指标风向", "超头部成交集中度与市场资金抱团趋势"],
+    etf: ["ETF 策略", "基于华泰柏瑞 ETF 与全景雷达板块评分的中期/短期 Top5 推荐"],
     portfolio: ["我的持股", "上传截图更新持股，持久化保存后结合板块、行情与新闻政策给出操作建议"],
     tracking: ["股票追踪", "每 15 分钟采集已追踪股票的分钟价格与成交量"],
     virtual: ["虚拟交易", "用模拟资金按K线/MACD/SAR/BOLL/牛门线每10分钟演练交易"],
@@ -2403,6 +2578,8 @@ function shell(content) {
         <nav class="nav">
           ${navButton("home", "全景雷达", icons.radar)}
           ${navButton("recommend", "股票推荐", icons.home)}
+          ${navButton("indicator", "指标风向", icons.indicator)}
+          ${navButton("etf", "ETF 策略", icons.etf)}
           ${navButton("portfolio", "我的持股", icons.list)}
           ${navButton("tracking", "股票追踪", icons.radar)}
           ${navButton("virtual", "虚拟交易", icons.trade)}
@@ -2435,6 +2612,7 @@ function shell(content) {
       ${stockModal()}
       ${stockFullscreenChartModal()}
       ${indexModal()}
+      ${etfModal()}
       ${portfolioUpdateModal()}
     </div>
   `;
@@ -2707,6 +2885,99 @@ function indexAnalysis(index) {
   return { rows, days: rows.length, trendPct, amplitude, avgAmount, high, low, upDays, state, stateClass, summary, reasons };
 }
 
+function etfModal() {
+  if (!state.modalEtf) return `<div class="overlay" id="etfOverlay"></div>`;
+  const etf = state.modalEtf;
+  const q = etf.quote || {};
+  const product = etf.product || {};
+  const candles = etf.candles || [];
+  const last = candles.at(-1) || {};
+  const prev = candles.length >= 2 ? candles[candles.length - 2] : last;
+  const close = Number(q.close || last.close || 0);
+  const prevClose = Number(q.prevClose || prev.close || close || 0);
+  const change = prevClose ? close - prevClose : 0;
+  const pct = prevClose ? (change / prevClose) * 100 : 0;
+
+  return `
+    <div class="overlay open" id="etfOverlay">
+      <div class="shade" data-close></div>
+      <section class="drawer etf-drawer" role="dialog" aria-modal="true">
+        <header class="drawer-head etf-drawer-head">
+          <div>
+            <div class="page-title">${escapeHtml(etf.name || "--")} <span class="stock-code">${escapeHtml(etf.code || "--")}</span></div>
+            <div class="page-subtitle">${product.type ? `${escapeHtml(product.type)} · ` : ""}${product.risk ? `风险等级 ${escapeHtml(product.risk)}` : ""}${product.manager ? ` · 基金经理 ${escapeHtml(product.manager)}` : ""}</div>
+          </div>
+          <button class="icon-btn" data-close title="关闭">${icons.close}</button>
+        </header>
+        <div class="drawer-body">
+          <section class="broker-quote etf-quote">
+            <div class="broker-main-price">
+              <span>${escapeHtml(etf.name || "--")}</span>
+              <strong class="${pctClass(pct)}">${close ? fmt(close, 3) : "--"}</strong>
+              <em class="${pctClass(pct)}">${change > 0 ? "+" : ""}${close ? fmt(change, 3) : "--"} / ${pct > 0 ? "+" : ""}${fmt(pct, 2)}%</em>
+            </div>
+            <div class="broker-quote-grid">
+              ${quoteCell("今开", fmt(q.open || last.open))}
+              ${quoteCell("最高", fmt(q.high || last.high), "up")}
+              ${quoteCell("最低", fmt(q.low || last.low), "down")}
+              ${quoteCell("昨收", fmt(prevClose))}
+              ${quoteCell("成交额", money(q.amount || last.amount))}
+              ${quoteCell("成交量", fmt(q.volume || last.volume, 0))}
+              ${quoteCell("近3月收益", Number.isFinite(etf.return3m) ? `${etf.return3m > 0 ? "+" : ""}${fmt(etf.return3m, 2)}%` : "--", etf.return3m >= 0 ? "up" : "down")}
+              ${quoteCell("近2周收益", Number.isFinite(etf.return2w) ? `${etf.return2w > 0 ? "+" : ""}${fmt(etf.return2w, 2)}%` : "--", etf.return2w >= 0 ? "up" : "down")}
+            </div>
+          </section>
+          <section class="etf-detail-grid">
+            <aside class="panel etf-info-panel">
+              <div class="detail-metrics etf-info-metrics">
+                ${metricItem("所属板块", escapeHtml(etf.sectorName || "未匹配"))}
+                ${metricItem("板块雷达分", Number.isFinite(etf.sectorScore) ? fmt(etf.sectorScore, 1) : "--")}
+                ${metricItem("主力净流入", money(etf.sectorMainNet))}
+                ${metricItem("MACD", escapeHtml(etf.technical?.macdLabel || "--"))}
+                ${metricItem("SAR", escapeHtml(etf.technical?.sarLabel || "--"))}
+                ${metricItem("风险等级", escapeHtml(product.risk || "--"))}
+                ${metricItem("基金经理", escapeHtml(product.manager || "--"))}
+                ${metricItem("产品类型", escapeHtml(product.type || "--"))}
+              </div>
+              ${product.url ? `<a class="external-link" href="https://www.huatai-pb.com${escapeHtml(product.url)}" target="_blank" rel="noreferrer">查看华泰柏瑞官网产品页 ${icons.arrow}</a>` : ""}
+            </aside>
+            <aside class="panel etf-reason-panel">
+              <div class="stock-action">
+                <span>中期推荐理由</span>
+                <small>基于 3 个月趋势、板块景气度与技术面</small>
+              </div>
+              <ul class="reason-list">
+                ${Array.isArray(etf.mediumReason) ? etf.mediumReason.map((r) => `<li>${escapeHtml(r)}</li>`).join("") : ""}
+              </ul>
+              <div class="stock-action">
+                <span>短期推荐理由</span>
+                <small>基于 2 周动量、量能与板块情绪</small>
+              </div>
+              <ul class="reason-list">
+                ${Array.isArray(etf.shortReason) ? etf.shortReason.map((r) => `<li>${escapeHtml(r)}</li>`).join("") : ""}
+              </ul>
+            </aside>
+          </section>
+          <section class="etf-candles">
+            <div class="section-head"><h4>近 20 日收盘价</h4></div>
+            <div class="etf-candle-list">
+              ${candles.slice(-20).map((row) => `
+                <div class="etf-candle-item ${row.close >= row.open ? "up" : "down"}">
+                  <span>${row.day?.slice(5) || "--"}</span>
+                  <b>${fmt(row.close, 3)}</b>
+                  <small>${row.pct > 0 ? "+" : ""}${fmt(row.pct, 2)}%</small>
+                </div>
+              `).join("")}
+            </div>
+          </section>
+          ${etf.loading ? `<div class="panel empty">正在同步行情...</div>` : ""}
+          ${etf.error ? `<div class="panel empty down">${escapeHtml(etf.error)}</div>` : ""}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function sectorCard(sector) {
   const reasons = sectorReasons({ ...sector, stocks: sectorStocks(sector.id) }).slice(0, 2);
   const news = state.sectorNews[sector.name] || [];
@@ -2884,6 +3155,192 @@ function recommendPage() {
     </section>
     ${meta.error ? `<div class="panel empty down">${meta.error}</div>` : ""}
     ${content}
+  `;
+}
+
+function etfStrategyPage() {
+  const data = state.etfStrategy || {};
+  const loading = state.etfStrategyLoading;
+  const refreshedAt = data.refreshedAt ? new Date(data.refreshedAt).toLocaleString("zh-CN") : "--";
+  const medium = data.mediumTop5 || [];
+  const short = data.shortTop5 || [];
+
+  return `
+    <div class="section-head first-section">
+      <h2>ETF 策略</h2>
+      <span class="hint">基于华泰柏瑞官网 ETF 列表，叠加全景雷达板块评分与技术面，生成中期/短期 Top5 推荐</span>
+    </div>
+    <section class="quote-strip etf-strip">
+      <div><span>华泰柏瑞 ETF</span><strong>${(data.etfs || []).length}只</strong></div>
+      <div><span>中期 Top5</span><strong>${medium.length}只</strong></div>
+      <div><span>短期 Top5</span><strong>${short.length}只</strong></div>
+      <div><span>更新时间</span><strong>${refreshedAt}</strong></div>
+    </section>
+    ${state.etfStrategyError ? `<div class="panel empty down">${escapeHtml(state.etfStrategyError)}</div>` : ""}
+    ${loading ? loadingView() : ""}
+    <div class="etf-section">
+      <div class="section-head"><h3>短期持仓（2 周）Top5</h3><span class="hint">偏动量 + 技术共振 + 板块情绪</span></div>
+      ${short.length ? `<div class="etf-grid">${short.map((item, index) => etfCard(item, index + 1, "short")).join("")}</div>` : `<div class="panel empty">暂无短期推荐，可点击刷新重算。</div>`}
+    </div>
+    <div class="etf-section">
+      <div class="section-head"><h3>中期持仓（3 个月）Top5</h3><span class="hint">偏趋势 + 板块景气 + 风险调整</span></div>
+      ${medium.length ? `<div class="etf-grid">${medium.map((item, index) => etfCard(item, index + 1, "medium")).join("")}</div>` : `<div class="panel empty">暂无中期推荐，可点击刷新重算。</div>`}
+    </div>
+  `;
+}
+
+function etfCard(item, rank, type) {
+  const name = escapeHtml(item.name || "--");
+  const code = escapeHtml(item.code || "--");
+  const symbol = escapeHtml(item.symbol || "");
+  const sectorName = escapeHtml(item.sectorName || "");
+  const score = type === "medium" ? item.mediumScore : item.shortScore;
+  const returnLabel = type === "medium" ? "近3月收益" : "近2周收益";
+  const returnValue = type === "medium" ? item.return3m : item.return2w;
+  const reasonLines = Array.isArray(type === "medium" ? item.mediumReason : item.shortReason)
+    ? (type === "medium" ? item.mediumReason : item.shortReason)
+    : [];
+
+  return `
+    <div class="card etf-card">
+      <div class="etf-card-header">
+        <span class="etf-rank">${rank}</span>
+        <div class="etf-title">
+          <strong>${name}</strong>
+          <span>${code}${sectorName ? ` · ${sectorName}` : ""}</span>
+        </div>
+        <div class="etf-score">
+          <span class="metric-label">评分</span>
+          <span class="metric-value ${score >= 0 ? "up" : "down"}">${Number.isFinite(score) ? fmt(score, 1) : "--"}</span>
+        </div>
+      </div>
+      <div class="etf-metrics">
+        <div class="metric"><span class="metric-label">${returnLabel}</span><span class="metric-value ${returnValue >= 0 ? "up" : "down"}">${Number.isFinite(returnValue) ? `${fmt(returnValue, 2)}%` : "--"}</span></div>
+        <div class="metric"><span class="metric-label">板块雷达分</span><span class="metric-value">${Number.isFinite(item.sectorScore) ? fmt(item.sectorScore, 1) : "--"}</span></div>
+        <div class="metric"><span class="metric-label">MACD</span><span class="metric-value">${escapeHtml(item.technical?.macdLabel || "--")}</span></div>
+        <div class="metric"><span class="metric-label">SAR</span><span class="metric-value">${escapeHtml(item.technical?.sarLabel || "--")}</span></div>
+      </div>
+      <div class="etf-reason">
+        ${reasonLines.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}
+      </div>
+      ${symbol ? `<button class="ghost" data-etf="${code}">查看行情</button>` : ""}
+    </div>
+  `;
+}
+
+function indicatorPage() {
+  const data = state.concentration || {};
+  const loading = state.concentrationLoading;
+  const error = state.concentrationError;
+  const dims = data.dimensions || {};
+  const topStocks = data.topStocks || [];
+  const industry = data.industryDistribution || [];
+  const history = state.concentrationHistory || [];
+  const window = state.concentrationHistoryWindow;
+  const updatedAt = data.updatedAt ? new Date(data.updatedAt).toLocaleString("zh-CN") : "--";
+
+  return `
+    <div class="section-head first-section">
+      <h2>超头部成交集中度</h2>
+      <span class="hint">按成交额排序，衡量资金向极少数股票的集中程度</span>
+    </div>
+    <section class="quote-strip indicator-strip">
+      <div><span>样本数</span><strong>${Number.isFinite(data.sampleCount) ? data.sampleCount : "--"}</strong></div>
+      <div><span>数据源</span><strong>${escapeHtml(data.dataSource || "--")}</strong></div>
+      <div><span>实时性</span><strong>${data.isRealtime === false ? "缓存快照" : "实时"}</strong></div>
+      <div><span>更新时间</span><strong>${updatedAt}</strong></div>
+    </section>
+    ${error ? `<div class="panel empty down">${escapeHtml(error)}</div>` : ""}
+    ${loading ? loadingView() : ""}
+    <div class="indicator-dashboard">
+      ${concentrationCard("Top25", dims.top25)}
+      ${concentrationCard("Top1%", dims.top1pct)}
+      ${concentrationCard("Top5%", dims.top5pct)}
+    </div>
+    <div class="indicator-controls">
+      <div class="segmented" aria-label="历史窗口">
+        <button class="${window === 20 ? "active" : ""}" data-concentration-window="20">20日</button>
+        <button class="${window === 60 ? "active" : ""}" data-concentration-window="60">60日</button>
+        <button class="${window === 120 ? "active" : ""}" data-concentration-window="120">120日</button>
+        <button class="${window === 240 ? "active" : ""}" data-concentration-window="240">240日</button>
+        <button class="${window === 500 ? "active" : ""}" data-concentration-window="500">近2年</button>
+      </div>
+      <div class="indicator-actions">
+        <button class="ghost" data-action="refresh-concentration" title="刷新集中度">${icons.refresh}刷新</button>
+        <button class="ghost" data-action="archive-concentration" title="归档今日并刷新历史">归档今日</button>
+        <button class="ghost" data-action="analyze-concentration" title="根据已有数据刷新行情结论">刷新结论</button>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="section-head"><h3>历史趋势</h3><span class="hint">${history.length} 个交易日</span></div>
+      <div class="concentration-chart-wrap" style="position:relative">
+        <canvas id="concentrationChart" width="800" height="320"></canvas>
+        <div class="chart-tip" id="concentrationChartTip"></div>
+      </div>
+      ${history.length < 20 ? `<div class="panel empty">历史数据积累中，分位判断暂不可用</div>` : ""}
+    </div>
+    <div class="indicator-analysis">
+      <div class="panel">
+        <div class="section-head"><h3>资金抱团趋势</h3></div>
+        <pre class="trend-summary">${escapeHtml(data.trendSummary || "暂无")}</pre>
+      </div>
+      <div class="panel">
+        <div class="section-head"><h3>行情走势变化可能性</h3>${data.aiNote ? `<span class="hint">${escapeHtml(data.aiNote)}</span>` : ""}</div>
+        ${(data.possibilities || []).length ? `<ul class="possibility-list">${(data.possibilities || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : `<div class="panel empty">暂无分析</div>`}
+      </div>
+    </div>
+    <div class="panel">
+      <div class="section-head"><h3>头部股票 Top25</h3></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>排名</th><th>名称</th><th>代码</th><th>现价</th><th>涨跌幅</th><th>成交额</th><th>占全市场</th><th>行业</th></tr></thead>
+          <tbody>
+            ${topStocks.map((stock) => `
+              <tr data-stock-code="${escapeHtml(stock.code || "")}" data-stock-name="${escapeHtml(stock.name || "")}">
+                <td>${stock.rank}</td>
+                <td><a href="#" data-action="open-stock">${escapeHtml(stock.name || "--")}</a></td>
+                <td>${escapeHtml(stock.code || "--")}</td>
+                <td>${fmt(stock.price)}</td>
+                <td class="${pctClass(stock.pct)}">${fmt(stock.pct)}%</td>
+                <td>${money(stock.amount)}</td>
+                <td>${fmt(stock.marketRatio, 2)}%</td>
+                <td>${escapeHtml(stock.industry || "未分类")}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="section-head"><h3>板块集中度分布（Top25）</h3></div>
+      <div class="industry-distribution">
+        ${industry.map((item) => `
+          <div class="industry-bar">
+            <div class="industry-bar-label">
+              <span>${escapeHtml(item.industry || "未分类")}</span>
+              <span>${fmt(item.ratio, 1)}% · ${money(item.amount)}</span>
+            </div>
+            <div class="industry-bar-track"><div class="industry-bar-fill" style="width:${Math.min(100, item.ratio || 0)}%"></div></div>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+    <p class="risk-note">本指标仅用于行情观察，不构成投资建议。</p>
+  `;
+}
+
+function concentrationCard(title, dim = {}) {
+  const level = dim.level || "数据不足";
+  const colorClass = dim.color || "gray";
+  const change = Number(dim.ratio) - Number((dim.prevRatio || dim.ratio));
+  return `
+    <div class="card concentration-card ${colorClass}">
+      <div class="concentration-title">${escapeHtml(title)}</div>
+      <div class="concentration-value">${fmt(dim.ratio, 2)}%</div>
+      <div class="concentration-change ${pctClass(change)}">${change >= 0 ? "+" : ""}${fmt(change, 2)}%</div>
+      <div class="concentration-level">${escapeHtml(level)}</div>
+      <div class="concentration-percentile">历史分位 ${dim.percentile ?? "--"}%</div>
+    </div>
   `;
 }
 
@@ -4312,6 +4769,24 @@ function portfolioUpdateModal() {
             <span></span>
           </div>
           <textarea class="ocr-textarea compact-textarea" data-portfolio-text placeholder="兜底导入：也可以粘贴 持股名称 / 持有数量 / 成本价，再点击保存并分析。" ${busy ? "disabled" : ""}>${state.portfolioText}</textarea>
+          <div class="manual-holdings-section">
+            <div class="manual-holdings-head">
+              <strong>手工输入</strong>
+              <span>逐行填写股票代码/名称、成本价和数量</span>
+            </div>
+            <div class="manual-holdings-rows">
+              ${state.portfolioManualHoldings.map((row, index) => `
+                <div class="manual-holding-row" data-manual-row="${index}">
+                  <input type="text" class="manual-holding-name" data-manual-name="${index}" placeholder="名称" value="${escapeHtml(row.name || "")}" ${busy ? "disabled" : ""} />
+                  <input type="text" class="manual-holding-code" data-manual-code="${index}" placeholder="代码" value="${escapeHtml(row.code || "")}" ${busy ? "disabled" : ""} />
+                  <input type="number" class="manual-holding-cost" data-manual-cost="${index}" placeholder="成本价" step="0.001" value="${row.cost || ""}" ${busy ? "disabled" : ""} />
+                  <input type="number" class="manual-holding-qty" data-manual-qty="${index}" placeholder="数量" step="1" value="${row.qty || ""}" ${busy ? "disabled" : ""} />
+                  <button class="icon-btn ghost small" data-action="remove-manual-holding" data-row-index="${index}" title="删除" ${busy ? "disabled" : ""}>${icons.close}</button>
+                </div>
+              `).join("")}
+            </div>
+            <button class="ghost small" data-action="add-manual-holding" ${busy ? "disabled" : ""}>+ 添加一行</button>
+          </div>
           <div class="controls">
             <button class="primary" data-action="analyze-portfolio" ${busy ? "disabled" : ""}>保存并分析</button>
             <button class="ghost" data-close ${busy ? "disabled" : ""}>取消</button>
@@ -5659,6 +6134,230 @@ function scheduleStockChartDraw() {
   });
 }
 
+let concentrationChartDrawFrame = 0;
+let concentrationChartHover = { index: -1, active: false, history: [], geometry: null };
+
+function scheduleConcentrationChartDraw() {
+  if (concentrationChartDrawFrame) return;
+  concentrationChartDrawFrame = requestAnimationFrame(() => {
+    concentrationChartDrawFrame = 0;
+    if (state.page === "indicator") drawConcentrationChart();
+  });
+}
+
+function bindConcentrationChartEvents(canvas) {
+  if (canvas._concentrationEventsBound) return;
+  canvas._concentrationEventsBound = true;
+  canvas.addEventListener("mousemove", handleConcentrationChartMove);
+  canvas.addEventListener("mouseleave", hideConcentrationChartTip);
+  canvas.addEventListener("touchstart", handleConcentrationChartTouch, { passive: false });
+  canvas.addEventListener("touchmove", handleConcentrationChartTouch, { passive: false });
+  canvas.addEventListener("touchend", hideConcentrationChartTip);
+}
+
+function handleConcentrationChartMove(event) {
+  const canvas = document.querySelector("#concentrationChart");
+  if (!canvas || !concentrationChartHover.geometry) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  updateConcentrationChartHover(x);
+}
+
+function handleConcentrationChartTouch(event) {
+  const canvas = document.querySelector("#concentrationChart");
+  if (!canvas || !concentrationChartHover.geometry) return;
+  event.preventDefault();
+  const touch = event.touches[0] || event.changedTouches[0];
+  const rect = canvas.getBoundingClientRect();
+  const x = touch.clientX - rect.left;
+  updateConcentrationChartHover(x);
+}
+
+function updateConcentrationChartHover(mouseX) {
+  const { geometry, history } = concentrationChartHover;
+  if (!geometry || history.length < 2) return;
+  const { padding, chartWidth } = geometry;
+  const innerX = Math.max(0, Math.min(mouseX - padding.left, chartWidth));
+  const index = Math.round((innerX / chartWidth) * (history.length - 1));
+  if (concentrationChartHover.index === index && concentrationChartHover.active) return;
+  concentrationChartHover.index = index;
+  concentrationChartHover.active = true;
+  scheduleConcentrationChartDraw();
+  showConcentrationChartTip(index);
+}
+
+function showConcentrationChartTip(index) {
+  const tip = document.querySelector("#concentrationChartTip");
+  const canvas = document.querySelector("#concentrationChart");
+  if (!tip || !canvas || !concentrationChartHover.geometry) return;
+  const record = concentrationChartHover.history[index];
+  if (!record) return;
+  const dims = record.dimensions || {};
+  const colors = { top25: "#3b82f6", top1pct: "#f59e0b", top5pct: "#6b7280" };
+  const labels = { top25: "Top25", top1pct: "Top1%", top5pct: "Top5%" };
+  const rows = ["top25", "top1pct", "top5pct"]
+    .map((key) => {
+      const ratio = dims[key]?.ratio;
+      return `<span style="color:${colors[key]}">●</span> ${labels[key]}: ${Number.isFinite(ratio) ? fmt(ratio, 2) : "--"}%`;
+    })
+    .join("<br>");
+  tip.innerHTML = `<b>${escapeHtml(record.date)}</b><br>${rows}`;
+  tip.classList.add("show");
+  tip.style.visibility = "hidden";
+
+  const rect = canvas.getBoundingClientRect();
+  const x = concentrationChartHover.geometry.padding.left + (index / (concentrationChartHover.history.length - 1)) * concentrationChartHover.geometry.chartWidth;
+  const tipWidth = tip.offsetWidth || 150;
+  const tipHeight = tip.offsetHeight || 60;
+  let left = x - tipWidth / 2;
+  let top = 24;
+  if (left < 4) left = 4;
+  if (left + tipWidth > rect.width - 4) left = rect.width - tipWidth - 4;
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+  tip.style.position = "absolute";
+  tip.style.visibility = "visible";
+}
+
+function hideConcentrationChartTip() {
+  concentrationChartHover.index = -1;
+  concentrationChartHover.active = false;
+  document.querySelector("#concentrationChartTip")?.classList.remove("show");
+  scheduleConcentrationChartDraw();
+}
+
+function drawConcentrationChart() {
+  const canvas = document.querySelector("#concentrationChart");
+  if (!canvas) return;
+  bindConcentrationChartEvents(canvas);
+  const ctx = canvas.getContext("2d");
+  const history = (state.concentrationHistory || []).filter((item) => item && item.date);
+  if (history.length < 2) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.font = "14px system-ui";
+    ctx.fillStyle = "#888";
+    ctx.fillText("历史数据不足", 20, canvas.height / 2);
+    return;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const width = rect.width || canvas.width;
+  const height = rect.height || canvas.height;
+  const padding = { top: 24, right: 48, bottom: 40, left: 48 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+
+  canvas.width = width;
+  canvas.height = height;
+  ctx.clearRect(0, 0, width, height);
+
+  const dims = ["top25", "top1pct", "top5pct"];
+  const colors = { top25: "#3b82f6", top1pct: "#f59e0b", top5pct: "#6b7280" };
+  const labels = { top25: "Top25", top1pct: "Top1%", top5pct: "Top5%" };
+  const allValues = history.flatMap((item) => dims.map((key) => item.dimensions?.[key]?.ratio).filter(Number.isFinite));
+  const minValue = Math.min(...allValues);
+  const maxValue = Math.max(...allValues);
+  const valueRange = maxValue - minValue || 1;
+
+  function x(index) {
+    return padding.left + (index / (history.length - 1)) * chartWidth;
+  }
+  function y(value) {
+    return padding.top + chartHeight - ((value - minValue) / valueRange) * chartHeight;
+  }
+
+  concentrationChartHover.history = history;
+  concentrationChartHover.geometry = { width, height, padding, chartWidth, chartHeight, x, y };
+
+  // grid
+  ctx.strokeStyle = "rgba(0,0,0,0.05)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i += 1) {
+    const value = minValue + (valueRange * i) / 4;
+    const py = y(value);
+    ctx.beginPath();
+    ctx.moveTo(padding.left, py);
+    ctx.lineTo(width - padding.right, py);
+    ctx.stroke();
+    ctx.fillStyle = "#888";
+    ctx.font = "11px system-ui";
+    ctx.textAlign = "right";
+    ctx.fillText(`${value.toFixed(2)}%`, padding.left - 8, py + 4);
+  }
+
+  // highlight line
+  if (concentrationChartHover.active && concentrationChartHover.index >= 0) {
+    const hx = x(concentrationChartHover.index);
+    ctx.strokeStyle = "rgba(0,0,0,0.12)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(hx, padding.top);
+    ctx.lineTo(hx, height - padding.bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // lines
+  for (const key of dims) {
+    ctx.strokeStyle = colors[key];
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    let first = true;
+    history.forEach((item, index) => {
+      const value = item.dimensions?.[key]?.ratio;
+      if (!Number.isFinite(value)) return;
+      const px = x(index);
+      const py = y(value);
+      if (first) {
+        ctx.moveTo(px, py);
+        first = false;
+      } else {
+        ctx.lineTo(px, py);
+      }
+    });
+    ctx.stroke();
+  }
+
+  // hover dots
+  if (concentrationChartHover.active && concentrationChartHover.index >= 0) {
+    const record = history[concentrationChartHover.index];
+    for (const key of dims) {
+      const value = record?.dimensions?.[key]?.ratio;
+      if (!Number.isFinite(value)) continue;
+      const px = x(concentrationChartHover.index);
+      const py = y(value);
+      ctx.fillStyle = colors[key];
+      ctx.beginPath();
+      ctx.arc(px, py, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  // x labels
+  ctx.fillStyle = "#888";
+  ctx.textAlign = "center";
+  const step = Math.max(1, Math.ceil(history.length / 8));
+  history.forEach((item, index) => {
+    if (index % step !== 0 && index !== history.length - 1) return;
+    ctx.fillText(item.date.slice(5), x(index), height - 12);
+  });
+
+  // legend
+  ctx.textAlign = "left";
+  dims.forEach((key, index) => {
+    const lx = padding.left + index * 70;
+    const ly = 14;
+    ctx.fillStyle = colors[key];
+    ctx.fillRect(lx, ly - 6, 12, 4);
+    ctx.fillStyle = "#333";
+    ctx.fillText(labels[key], lx + 16, ly);
+  });
+}
+
 function syncStockChartIndicatorControls() {
   const indicators = state.stockChartIndicators || {};
   document.querySelectorAll("[data-chart-indicator]").forEach((button) => {
@@ -5925,7 +6624,7 @@ function render(scrollAnchor = captureScrollAnchors()) {
   const stockScroll = captureStockModalScroll();
   skipAdvisorFocusRestoreOnce = false;
   if (state.page === "radar" || state.page === "sector") state.page = "home";
-  const pages = { home: homePage, recommend: recommendPage, portfolio: portfolioPage, tracking: trackingPage, virtual: virtualTradingPage, discussion: discussionPage, settings: settingsPage };
+  const pages = { home: homePage, recommend: recommendPage, indicator: indicatorPage, etf: etfStrategyPage, portfolio: portfolioPage, tracking: trackingPage, virtual: virtualTradingPage, discussion: discussionPage, settings: settingsPage };
   suppressScrollTracking = true;
   app.innerHTML = shell(pages[state.page]());
   restoreScrollAnchors(scrollAnchor);
@@ -5937,6 +6636,7 @@ function render(scrollAnchor = captureScrollAnchors()) {
   if (state.modalStock) scheduleStockChartDraw();
   if (activeFullscreenStockChart()) scheduleStockChartDraw();
   if (state.page === "tracking") scheduleTrackingChartsDraw();
+  if (state.page === "indicator") scheduleConcentrationChartDraw();
   if (state.modalIndex) requestAnimationFrame(() => drawIndexChart(state.modalIndex));
   if (advisorFocus) restoreAdvisorFocus(advisorFocus);
   else focusAdvisorInput();
@@ -6045,6 +6745,7 @@ app.addEventListener("click", (event) => {
   const page = event.target.closest("[data-page]")?.dataset.page;
   const sectorId = event.target.closest("[data-sector]")?.dataset.sector;
   const stockCode = event.target.closest("[data-stock]")?.dataset.stock;
+  const etfCode = event.target.closest("[data-etf]")?.dataset.etf;
   const indexSymbol = event.target.closest("[data-index]")?.dataset.index;
   const sectorSort = event.target.closest("[data-sector-sort]")?.dataset.sectorSort;
   const sectorPageAction = event.target.closest("[data-sector-page]")?.dataset.sectorPage;
@@ -6055,6 +6756,8 @@ app.addEventListener("click", (event) => {
     runButtonAction(event.target, "切换页面", async () => {
       update({ page });
       if (page === "recommend") await loadRecommendations();
+      if (page === "indicator") await loadConcentration();
+      if (page === "etf") await loadEtfStrategy();
       if (page === "tracking") await loadTracking();
       if (page === "virtual") await loadVirtualTrading();
       if (page === "portfolio") {
@@ -6078,6 +6781,10 @@ app.addEventListener("click", (event) => {
   }
   if (stockCode) {
     runButtonAction(event.target, "打开股票详情", () => openStock(stockCode));
+    return;
+  }
+  if (etfCode) {
+    runButtonAction(event.target, "打开 ETF 行情", () => openEtf(etfCode));
     return;
   }
   if (sectorSort) {
@@ -6153,9 +6860,41 @@ app.addEventListener("click", (event) => {
       state.sectorStockIndexLoading = false;
       await loadSectors({ silent: true, clearStockCache: true });
       if (state.page === "recommend") await loadRecommendations({ force: true });
+      if (state.page === "indicator") await loadConcentration({ force: true });
+      if (state.page === "etf") await loadEtfStrategy({ force: true });
       if (state.page === "tracking") await loadTracking({ force: true });
       if (state.page === "virtual") await loadVirtualTrading({ force: true });
     }, { successToast: true });
+    return;
+  }
+  if (event.target.closest("[data-action='refresh-concentration']")) {
+    runButtonAction(event.target, "刷新集中度", () => loadConcentration({ force: true }), { successToast: true });
+    return;
+  }
+  if (event.target.closest("[data-action='archive-concentration']")) {
+    runButtonAction(event.target, "归档今日集中度", () => refreshConcentrationHistory(), { successToast: true });
+    return;
+  }
+  if (event.target.closest("[data-action='analyze-concentration']")) {
+    runButtonAction(event.target, "AI 分析集中度", () => analyzeConcentration(), { successToast: true });
+    return;
+  }
+  const concentrationWindow = event.target.closest("[data-concentration-window]")?.dataset.concentrationWindow;
+  if (concentrationWindow) {
+    runButtonAction(event.target, "切换历史窗口", async () => {
+      update({ concentrationHistoryWindow: Number(concentrationWindow) });
+      await loadConcentrationHistory(Number(concentrationWindow));
+    }, { successToast: true });
+    return;
+  }
+  const openStockBtn = event.target.closest("[data-action='open-stock']");
+  if (openStockBtn) {
+    event.preventDefault();
+    const row = openStockBtn.closest("[data-stock-code]");
+    const code = row?.dataset.stockCode;
+    if (code) {
+      runButtonAction(openStockBtn, "打开股票详情", () => openStock(code), { successToast: true });
+    }
     return;
   }
   if (event.target.closest("[data-action='refresh-tracking']")) {
@@ -6196,12 +6935,27 @@ app.addEventListener("click", (event) => {
     runButtonAction(event.target, "持股分析", () => analyzePortfolioText());
     return;
   }
+  if (event.target.closest("[data-action='add-manual-holding']")) {
+    event.preventDefault();
+    addManualHoldingRow();
+    return;
+  }
+  const removeManualBtn = event.target.closest("[data-action='remove-manual-holding']");
+  if (removeManualBtn) {
+    event.preventDefault();
+    removeManualHoldingRow(Number(removeManualBtn.dataset.rowIndex));
+    return;
+  }
   if (event.target.closest("[data-action='verify-app-access']")) {
     runButtonAction(event.target, "身份验证", () => verifyAppAccess());
     return;
   }
   if (event.target.closest("[data-action='open-portfolio-update']")) {
-    runButtonAction(event.target, "打开更新持股", () => update({ modalPortfolioUpdate: true, ocrProgress: "" }), { successToast: true });
+    runButtonAction(event.target, "打开更新持股", () => update({
+      modalPortfolioUpdate: true,
+      ocrProgress: "",
+      portfolioManualHoldings: state.portfolioManualHoldings.length ? state.portfolioManualHoldings : [{ name: "", code: "", cost: "", qty: "" }]
+    }), { successToast: true });
     return;
   }
   if (event.target.closest("[data-action='reload-portfolio']")) {
@@ -6330,6 +7084,18 @@ app.addEventListener("input", (event) => {
     state.portfolioText = event.target.value;
     if (event.isComposing || state.portfolioTextComposing) return;
   }
+  if (event.target.matches("[data-manual-name], [data-manual-code], [data-manual-cost], [data-manual-qty]")) {
+    const index = Number(event.target.closest("[data-manual-row]")?.dataset.manualRow);
+    if (Number.isFinite(index)) {
+      const key = event.target.dataset.manualName !== undefined ? "name"
+        : event.target.dataset.manualCode !== undefined ? "code"
+        : event.target.dataset.manualCost !== undefined ? "cost" : "qty";
+      state.portfolioManualHoldings = state.portfolioManualHoldings.map((row, i) =>
+        i === index ? { ...row, [key]: event.target.value } : row
+      );
+    }
+    if (event.isComposing || state.portfolioManualComposing) return;
+  }
   if (event.target.matches("[data-sector-search]")) {
     state.sectorSearchDraft = event.target.value;
     updateSectorSearchDraftStatus(event.target.value);
@@ -6384,6 +7150,9 @@ app.addEventListener("compositionstart", (event) => {
   if (event.target.matches("[data-tracking-search]")) {
     state.trackingSearchComposing = true;
   }
+  if (event.target.matches("[data-manual-name], [data-manual-code], [data-manual-cost], [data-manual-qty]")) {
+    state.portfolioManualComposing = true;
+  }
 });
 
 app.addEventListener("compositionend", (event) => {
@@ -6416,6 +7185,18 @@ app.addEventListener("compositionend", (event) => {
     state.trackingSearchResults = [];
     state.trackingSearchLoading = false;
     renderTrackingSearchPreservingFocus(value, cursor);
+  }
+  if (event.target.matches("[data-manual-name], [data-manual-code], [data-manual-cost], [data-manual-qty]")) {
+    const index = Number(event.target.closest("[data-manual-row]")?.dataset.manualRow);
+    if (Number.isFinite(index)) {
+      const key = event.target.dataset.manualName !== undefined ? "name"
+        : event.target.dataset.manualCode !== undefined ? "code"
+        : event.target.dataset.manualCost !== undefined ? "cost" : "qty";
+      state.portfolioManualHoldings = state.portfolioManualHoldings.map((row, i) =>
+        i === index ? { ...row, [key]: event.target.value } : row
+      );
+    }
+    state.portfolioManualComposing = false;
   }
 });
 
@@ -6523,6 +7304,18 @@ app.addEventListener("scroll", (event) => {
   }
 }, true);
 
+function initPageFromUrl() {
+  const validPages = new Set([
+    "home", "recommend", "indicator", "etf", "portfolio",
+    "tracking", "virtual", "discussion", "settings"
+  ]);
+  const page = window.location.pathname.replace(/^\//, "").split("/")[0];
+  if (page && validPages.has(page)) {
+    state.page = page;
+  }
+}
+
+initPageFromUrl();
 render();
 startAppDataOnce();
 setInterval(() => requestAutoRefresh("home"), homeRefreshMs);
@@ -6533,3 +7326,6 @@ setInterval(() => {
 setInterval(() => {
   if (isAppAuthenticated() && state.page === "virtual" && isAshareTradingAutoRefreshTime()) loadVirtualTrading({ force: true, silent: true });
 }, 10 * 60_000);
+setInterval(() => {
+  if (isAppAuthenticated() && state.page === "indicator" && isAshareTradingAutoRefreshTime()) loadConcentration({ force: true, silent: true });
+}, 5 * 60_000);

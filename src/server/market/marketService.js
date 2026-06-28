@@ -638,6 +638,90 @@ function createMarketService({
     }
   }
 
+  async function getAllAsharesFromEastmoney() {
+    const all = [];
+    const pageSize = 100;
+    let page = 1;
+    const fs = "m:0+t:6,m:1+t:2,m:1+t:23,m:0+t:80";
+    const fields = "f12,f13,f14,f2,f3,f4,f5,f6,f7,f8,f20,f100";
+    while (page <= 100) {
+      const url = eastmoneyUrl("push2.eastmoney.com", "/api/qt/clist/get", {
+        pn: String(page),
+        pz: String(pageSize),
+        po: "1",
+        np: "1",
+        fltt: "2",
+        invt: "2",
+        fid: "f6",
+        fs,
+        fields
+      });
+      const json = await fetchJson(url);
+      const rows = json?.data?.diff || [];
+      if (!rows.length) break;
+      for (const row of rows) {
+        const code = String(row.f12 || "").trim();
+        const name = String(row.f14 || "").trim();
+        const amount = Number(row.f6);
+        const price = Number(row.f2);
+        if (!code || !name || !Number.isFinite(amount) || amount <= 0) continue;
+        all.push({
+          name,
+          code,
+          market: Number.isFinite(Number(row.f13)) ? Number(row.f13) : marketOf(code),
+          price,
+          pct: Number(row.f3),
+          change: Number(row.f4),
+          volume: Number(row.f5),
+          amount,
+          amplitude: Number(row.f7),
+          turnover: Number(row.f8),
+          industry: String(row.f100 || "").trim(),
+          source: "eastmoney"
+        });
+      }
+      if (rows.length < pageSize) break;
+      page += 1;
+    }
+    return all;
+  }
+
+  async function getAllAshares() {
+    const preferred = marketDataSource();
+    if (preferred === "tencent") {
+      try {
+        return await getAllAsharesFromTencent();
+      } catch {
+        // fallback
+      }
+    }
+    try {
+      return await getAllAsharesFromEastmoney();
+    } catch {
+      return getAllAsharesFromTencent();
+    }
+  }
+
+  async function getAllAsharesFromTencent() {
+    const allSymbols = curatedSectors.flatMap(([, , stocks]) => stocks.map(([symbol]) => symbol));
+    const quotes = await getTencentQuotes(allSymbols);
+    return [...quotes.values()]
+      .filter((quote) => Number.isFinite(quote.amount) && quote.amount > 0)
+      .map((quote) => ({
+        name: quote.name,
+        code: quote.code,
+        market: quote.symbol.startsWith("sh") ? 1 : 0,
+        price: quote.price,
+        pct: quote.pct,
+        change: quote.change,
+        volume: quote.volume,
+        amount: quote.amount,
+        turnover: quote.turnover,
+        industry: "",
+        source: "tencent"
+      }));
+  }
+
   async function getFallbackSectors(window) {
     const allSymbols = curatedSectors.flatMap(([, , stocks]) => stocks.map(([symbol]) => symbol));
     const quotes = await getTencentQuotes(allSymbols);
@@ -727,6 +811,9 @@ function createMarketService({
     getStocks,
     getStockKline,
     getStockProfile,
+    getAllAshares,
+    getAllAsharesFromEastmoney,
+    getAllAsharesFromTencent,
     getFallbackSectors,
     getFallbackStocks
   };

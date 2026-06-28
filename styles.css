@@ -3141,6 +3141,67 @@ button.virtual-backtest-chart-button.is-loading::before {
   min-height: 130px;
 }
 
+.manual-holdings-section {
+  border: 1px dashed #37637d;
+  background: #09131c;
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.manual-holdings-head {
+  display: grid;
+  gap: 2px;
+}
+
+.manual-holdings-head strong {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.manual-holdings-head span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.manual-holdings-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.manual-holding-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.manual-holding-row input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #071018;
+  color: var(--ink);
+  padding: 9px 10px;
+  min-height: 38px;
+  font-size: 13px;
+}
+
+.manual-holding-row input::placeholder {
+  color: #4a6573;
+}
+
+.manual-holding-row button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  flex-shrink: 0;
+}
+
 .upload-box {
   border: 1px dashed #37637d;
   background: #09131c;
@@ -6231,5 +6292,421 @@ canvas {
 
   .broker-quote-grid div:last-child {
     border-bottom: 0;
+  }
+}
+
+/* ETF 策略 */
+.etf-strip {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.etf-section {
+  margin-top: 24px;
+}
+
+.etf-section .section-head {
+  margin-bottom: 16px;
+}
+
+.etf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 16px;
+}
+
+.etf-card {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.etf-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.etf-rank {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--blue);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.etf-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.etf-title strong {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.etf-title span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.etf-score {
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.etf-score .metric-value {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.etf-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.etf-metrics .metric {
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 8px;
+  text-align: center;
+}
+
+.etf-metrics .metric-label {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.etf-metrics .metric-value {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.etf-reason {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.etf-reason p {
+  margin: 4px 0;
+}
+
+.etf-card .ghost {
+  align-self: flex-start;
+}
+
+@media (max-width: 768px) {
+  .etf-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .etf-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .etf-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ETF 详情弹窗 */
+.etf-drawer {
+  width: min(860px, 92vw);
+}
+
+.etf-quote {
+  margin-bottom: 16px;
+}
+
+.etf-detail-grid {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.etf-info-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.etf-info-metrics {
+  grid-template-columns: 1fr 1fr;
+}
+
+.etf-info-panel .external-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--blue);
+  text-decoration: none;
+}
+
+.etf-info-panel .external-link:hover {
+  text-decoration: underline;
+}
+
+.etf-info-panel .external-link svg {
+  width: 14px;
+  height: 14px;
+}
+
+.etf-reason-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.etf-reason-panel .stock-action {
+  padding: 12px 16px;
+}
+
+.etf-reason-panel .reason-list li {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.etf-candles {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.etf-candles .section-head {
+  margin-bottom: 12px;
+}
+
+.etf-candle-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 8px;
+}
+
+.etf-candle-item {
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 8px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.etf-candle-item span {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.etf-candle-item b {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+
+.etf-candle-item small {
+  display: block;
+  font-size: 11px;
+}
+
+@media (max-width: 768px) {
+  .etf-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .etf-candle-list {
+    grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+  }
+}
+
+/* 指标风向 - 超头部成交集中度 */
+.indicator-dashboard {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.concentration-card {
+  padding: 18px;
+  text-align: center;
+  border-left: 4px solid var(--blue);
+}
+
+.concentration-card.extreme { border-left-color: var(--violet); }
+.concentration-card.high { border-left-color: var(--red); }
+.concentration-card.normal { border-left-color: var(--blue); }
+.concentration-card.low { border-left-color: var(--green); }
+.concentration-card.lowest { border-left-color: var(--cyan); }
+.concentration-card.gray { border-left-color: var(--muted); }
+
+.concentration-title {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.concentration-value {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+
+.concentration-change {
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.concentration-level {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.concentration-percentile {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.indicator-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.indicator-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.concentration-chart-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+#concentrationChart {
+  width: 100%;
+  max-width: 100%;
+  height: 320px;
+  background: var(--paper-2);
+  border-radius: 8px;
+}
+
+#concentrationChartTip {
+  min-width: 148px;
+  max-width: 200px;
+}
+
+#concentrationChartTip b {
+  display: block;
+  margin-bottom: 4px;
+}
+
+#concentrationChartTip span {
+  display: inline-block;
+  margin-right: 4px;
+}
+
+.indicator-analysis {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.trend-summary {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.possibility-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.possibility-list li {
+  margin-bottom: 8px;
+  line-height: 1.6;
+}
+
+.industry-distribution {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.industry-bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.industry-bar-track {
+  height: 8px;
+  background: var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.industry-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue), var(--cyan));
+  border-radius: 4px;
+}
+
+.risk-note {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  margin-top: 8px;
+}
+
+@media (max-width: 768px) {
+  .indicator-dashboard,
+  .indicator-analysis {
+    grid-template-columns: 1fr;
+  }
+
+  .indicator-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .indicator-actions {
+    justify-content: flex-start;
   }
 }

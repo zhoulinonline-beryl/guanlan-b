@@ -14,6 +14,7 @@ function createApiRouter(deps) {
     redactLogText,
     readHoldingsStore,
     writeHoldingsStore,
+    normalizeHolding,
     adminLogin,
     changeAdminPassword,
     extractAdminToken,
@@ -54,7 +55,14 @@ function createApiRouter(deps) {
     refreshVirtualTrading,
     runVirtualTradingBacktest,
     applyVirtualTradingBacktestStrategies,
-    saveVirtualStockStrategy
+    saveVirtualStockStrategy,
+    refreshEtfStrategy,
+    readEtfStrategyStore,
+    getEtfProductInfo,
+    getConcentration,
+    getConcentrationHistory,
+    archiveConcentration,
+    analyzeConcentration
   } = deps;
 
   function holdingsAuthStatus(req) {
@@ -198,6 +206,18 @@ function createApiRouter(deps) {
       const parsed = await parsePortfolioHoldings(body.text || "");
       const store = writeHoldingsStore(parsed);
       const data = await analyzeHoldings(store.holdings, { parser: hasAiKey() ? "ai+rules" : "rules", withNews: false });
+      return { data: { ...data, savedAt: store.updatedAt } };
+    }],
+    ["POST", "/api/holdings/import-manual", async ({ req }) => {
+      requireHoldingsAccess(req);
+      const body = await readJsonBody(req);
+      const list = Array.isArray(body.holdings) ? body.holdings : [];
+      if (!list.length) throw new Error("请至少输入一条持股");
+      const normalized = list.map(normalizeHolding).filter((item) => item.code || item.name);
+      const enriched = await enrichParsedHoldings(normalized);
+      if (!enriched.length) throw new Error("没有识别到有效持股，请检查股票代码或名称");
+      const store = writeHoldingsStore(enriched);
+      const data = await analyzeHoldings(store.holdings, { parser: "manual", withNews: false });
       return { data: { ...data, savedAt: store.updatedAt } };
     }],
     ["DELETE", "/api/holdings", async ({ req }) => {
@@ -429,6 +449,74 @@ function createApiRouter(deps) {
         if (!data) throw error;
         data = { ...data, snapshotFallback: true };
       }
+      return { data };
+    }],
+    ["GET", "/api/etf-strategy", async () => {
+      const store = readEtfStrategyStore();
+      const isFresh = store.refreshedAt && Date.now() - Date.parse(store.refreshedAt) < 60 * 60 * 1000;
+      if (!isFresh || !store.mediumTop5?.length || !store.shortTop5?.length) {
+        // 后台触发刷新，不阻塞当前请求
+        refreshEtfStrategy().catch(() => {});
+      }
+      return {
+        data: {
+          status: store.status,
+          refreshedAt: store.refreshedAt,
+          mediumTop5: store.mediumTop5 || [],
+          shortTop5: store.shortTop5 || []
+        }
+      };
+    }],
+    ["POST", "/api/etf-strategy/refresh", async () => {
+      const result = await refreshEtfStrategy({ force: true });
+      return {
+        data: {
+          status: result.status,
+          refreshedAt: result.refreshedAt,
+          mediumTop5: result.mediumTop5 || [],
+          shortTop5: result.shortTop5 || []
+        }
+      };
+    }],
+    ["GET", "/api/etf-product", async ({ url }) => {
+      const code = url.searchParams.get("code");
+      if (!code) throw new Error("缺少 code 参数");
+      const product = await getEtfProductInfo(code);
+      return { data: { product } };
+    }],
+    ["GET", "/api/indicator/concentration", async ({ url }) => {
+      const force = url.searchParams.get("force") === "1";
+      const window = Number(url.searchParams.get("window") || 120);
+      const data = await getConcentration({ force, window });
+      return {
+        data: {
+          updatedAt: data.updatedAt,
+          marketScope: data.marketScope,
+          sampleCount: data.sampleCount,
+          dataSource: data.dataSource,
+          isRealtime: data.isRealtime,
+          dimensions: data.dimensions,
+          topStocks: data.topStocks,
+          industryDistribution: data.industryDistribution,
+          trendSummary: data.trendSummary,
+          possibilities: data.possibilities,
+          history: data.history,
+          elapsedMs: data.elapsedMs
+        }
+      };
+    }],
+    ["GET", "/api/indicator/concentration/history", async ({ url }) => {
+      const window = Number(url.searchParams.get("window") || 60);
+      const data = await getConcentrationHistory(window);
+      return { data };
+    }],
+    ["POST", "/api/indicator/concentration/analyze", async ({ req }) => {
+      const body = await readJsonBody(req);
+      const data = await analyzeConcentration(body || {});
+      return { data };
+    }],
+    ["POST", "/api/indicator/concentration/archive", async () => {
+      const data = await archiveConcentration({ force: true });
       return { data };
     }]
   ].map(([method, pathname, handler]) => ({ method, pathname, handler }));

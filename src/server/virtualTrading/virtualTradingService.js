@@ -224,6 +224,19 @@ function buildVirtualSignal({ stock = {}, quote = {}, candles = [], position = n
   const sar = sarForServer(rows);
   const boll = bollSnapshot(rows);
   const bullGate = bullGateSnapshot(rows);
+  const closes = rows.map((item) => finite(item.close)).filter(Number.isFinite);
+  const ma20 = closes.length >= 20 ? movingAverage(closes, 20).at(-1) : null;
+  const recent10 = rows.slice(-10);
+  const recentHigh = recent10.length ? Math.max(...recent10.map((item) => finite(item.high))) : null;
+  const recentLow = recent10.length ? Math.min(...recent10.map((item) => finite(item.low))) : null;
+  const recentCloseHigh = recent10.length ? Math.max(...recent10.map((item) => finite(item.close))) : null;
+  const pullbackBuy = Number.isFinite(ma20) ? Math.max(ma20, close * 0.97) : close * 0.97;
+  const breakoutBuy = Number.isFinite(recentCloseHigh) ? recentCloseHigh * 1.005 : close;
+  const support = Number.isFinite(recentLow) ? Math.max(recentLow, close * 0.94) : close * 0.94;
+  const isOverExtended = boll && close > boll.upper * 1.02;
+  const atPullback = close <= pullbackBuy * 1.02;
+  const atBreakout = Number.isFinite(recentCloseHigh) && close >= recentCloseHigh * 0.998;
+  const priceReadyForBuy = !isOverExtended && (atPullback || atBreakout);
   const lastIndex = rows.length - 1;
   const dif = finite(macd.dif[lastIndex]);
   const dea = finite(macd.dea[lastIndex]);
@@ -327,9 +340,17 @@ function buildVirtualSignal({ stock = {}, quote = {}, candles = [], position = n
   const boundedScore = Math.max(0, Math.min(100, score));
   let action = "hold";
   let intensity = "observe";
-  if (!position?.qty && boundedScore >= buyThreshold) {
+  if (!position?.qty && boundedScore >= buyThreshold && priceReadyForBuy) {
     action = "buy";
-    intensity = boundedScore >= buyThreshold + 9 ? "strong" : "probe";
+    intensity = boundedScore >= buyThreshold + 9 && atPullback ? "strong" : "probe";
+  } else if (!position?.qty && boundedScore >= buyThreshold) {
+    action = "hold";
+    intensity = "observe";
+    if (isOverExtended) {
+      reasons.push(`价格已冲出 BOLL 上轨 ${close.toFixed(2)} > ${(boll.upper * 1.02).toFixed(2)}，与股票追踪“等回踩”建议保持一致，暂缓买入。`);
+    } else if (!atPullback && !atBreakout) {
+      reasons.push(`机会分 ${boundedScore.toFixed(1)} 已达标，但当前价 ${close.toFixed(2)} 不在回踩区 ${pullbackBuy.toFixed(2)} 或突破区 ${breakoutBuy.toFixed(2)}，等价格到位再建仓。`);
+    }
   } else if (position?.qty && boundedScore <= sellThreshold) {
     action = "sell";
     intensity = boundedScore <= sellThreshold - 8 ? "exit" : "reduce";
@@ -356,7 +377,10 @@ function buildVirtualSignal({ stock = {}, quote = {}, candles = [], position = n
     changePct,
     technicalLabel: `${technical.macdLabel || "MACD"} · ${technical.sarLabel || "SAR"}`,
     levels: {
-      buyLine: bullGate?.upper || boll?.mid || close,
+      buyLine: atPullback ? pullbackBuy : breakoutBuy,
+      pullbackBuy,
+      breakoutBuy,
+      support,
       riskLine: Math.min(finite(bullGate?.lower, close * 0.97), finite(sarValue, close * 0.97)),
       stopLine: Math.min(finite(boll?.lower, close * 0.94), close * 0.94),
       takeProfitLine: Math.max(finite(boll?.upper, close * 1.06), close * 1.05)
@@ -370,13 +394,15 @@ function buildVirtualSignal({ stock = {}, quote = {}, candles = [], position = n
       resonanceCount,
       contributions
     },
-    orderPlan: buildSignalOrderPlan({ action, intensity, score: boundedScore, close, position, strategy }),
+    orderPlan: buildSignalOrderPlan({ action, intensity, score: boundedScore, close, position, strategy, levels: { pullbackBuy, breakoutBuy } }),
     reasons: reasons.slice(0, 8),
-    summary: summarizeSignal(action, intensity, boundedScore)
+    summary: action === "hold" && !position?.qty && boundedScore >= buyThreshold
+      ? `指标偏强但价格未到位，机会分 ${boundedScore.toFixed(1)}；等回踩 ${pullbackBuy.toFixed(2)} 或放量突破 ${breakoutBuy.toFixed(2)} 再建仓。`
+      : summarizeSignal(action, intensity, boundedScore)
   };
 }
 
-function buildSignalOrderPlan({ action, intensity, score, close, position = null, strategy = {} }) {
+function buildSignalOrderPlan({ action, intensity, score, close, position = null, strategy = {}, levels = {} }) {
   if (action === "buy") {
     const scale = intensity === "strong" ? 1 : 0.55;
     return {
@@ -397,6 +423,12 @@ function buildSignalOrderPlan({ action, intensity, score, close, position = null
     return {
       text: "继续持有，不主动加仓",
       trigger: `持仓 ${position.qty} 股，等待突破或风控信号`
+    };
+  }
+  if (levels.pullbackBuy && levels.breakoutBuy) {
+    return {
+      text: "价格未进入建仓区，保持观察",
+      trigger: `回踩 ${finite(levels.pullbackBuy).toFixed(2)} 或突破 ${finite(levels.breakoutBuy).toFixed(2)} 时再触发买入；当前机会分 ${score.toFixed(1)}`
     };
   }
   return {

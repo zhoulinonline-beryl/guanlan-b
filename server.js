@@ -7,7 +7,8 @@ const {
   root,
   PORT,
   HOST,
-  RECOMMEND_REFRESH_MS
+  RECOMMEND_REFRESH_MS,
+  ETF_STRATEGY_REFRESH_MS
 } = require("./src/server/config");
 const {
   normalizeAiApiUrl,
@@ -76,10 +77,18 @@ const { createStartupMarketSnapshotJob } = require("./src/server/jobs/marketSnap
 const { startRecommendationRefreshJob } = require("./src/server/jobs/recommendationRefreshJob");
 const { createTrackingRefreshJob } = require("./src/server/jobs/trackingRefreshJob");
 const { createVirtualTradingJob } = require("./src/server/jobs/virtualTradingJob");
+const { startEtfStrategyRefreshJob } = require("./src/server/jobs/etfStrategyRefreshJob");
+const { startConcentrationArchiveJob } = require("./src/server/jobs/concentrationArchiveJob");
+const { createConcentrationService } = require("./src/server/indicators/concentrationService");
 const { createRecommendationService } = require("./src/server/recommendations/recommendationService");
 const { createVirtualTradingService } = require("./src/server/virtualTrading/virtualTradingService");
 const { createApiRouter } = require("./src/server/routes/apiRouter");
 const { createNewsService } = require("./src/server/news/newsService");
+const { createEtfListService } = require("./src/server/etf/etfListService");
+const { createEtfSectorMapper } = require("./src/server/etf/etfSectorMapper");
+const { createEtfStrategyService } = require("./src/server/etf/etfStrategyService");
+const { readEtfStrategyStore, writeEtfStrategyStore } = require("./src/server/etf/etfStrategyStore");
+const { createEtfProductService } = require("./src/server/etf/etfProductService");
 
 const execFileAsync = promisify(execFile);
 const staticTypes = {
@@ -248,8 +257,16 @@ const {
   getSectors,
   getStocks,
   getStockKline,
-  getStockProfile
+  getStockProfile,
+  getAllAshares
 } = marketService;
+
+const concentrationService = createConcentrationService({
+  getAllAshares,
+  getIndices,
+  hasAiKey,
+  kimiJson
+});
 
 const {
   getStockNews,
@@ -1581,6 +1598,21 @@ const virtualTradingJob = createVirtualTradingJob({
   refreshMs: 10 * 60 * 1000
 });
 
+const etfListService = createEtfListService({ fetchText });
+const etfProductService = createEtfProductService({ fetchText });
+const etfSectorMapper = createEtfSectorMapper({ getSectors });
+const etfStrategyService = createEtfStrategyService({
+  getEtfList: etfListService.getEtfList,
+  getStockKline,
+  mapEtfToSector: etfSectorMapper.mapEtfToSector
+});
+
+async function refreshEtfStrategy({ force = false } = {}) {
+  const result = await etfStrategyService.refreshStrategy({ force });
+  writeEtfStrategyStore(result);
+  return result;
+}
+
 const handleApi = createApiRouter({
   HOST,
   PORT,
@@ -1594,6 +1626,7 @@ const handleApi = createApiRouter({
   redactLogText,
   readHoldingsStore,
   writeHoldingsStore,
+  normalizeHolding,
   adminLogin,
   changeAdminPassword,
   extractAdminToken,
@@ -1634,12 +1667,24 @@ const handleApi = createApiRouter({
   refreshVirtualTrading: virtualTradingJob.refreshVirtualTrading,
   runVirtualTradingBacktest: virtualTradingService.runBacktest,
   applyVirtualTradingBacktestStrategies: virtualTradingService.applyBacktestStockStrategies,
-  saveVirtualStockStrategy: virtualTradingService.saveStockStrategy
+  saveVirtualStockStrategy: virtualTradingService.saveStockStrategy,
+  refreshEtfStrategy,
+  readEtfStrategyStore,
+  getEtfProductInfo: etfProductService.getEtfProductInfo,
+  getConcentration: concentrationService.getConcentration,
+  getConcentrationHistory: concentrationService.getHistory,
+  archiveConcentration: concentrationService.archiveToday,
+  analyzeConcentration: concentrationService.analyzePossibilities
 });
+
+const SPA_ROUTES = new Set([
+  "/home", "/recommend", "/indicator", "/etf", "/portfolio",
+  "/tracking", "/virtual", "/discussion", "/settings"
+]);
 
 function handleStatic(req, res) {
   let pathname = decodeURIComponent(req.url.split("?")[0]);
-  if (pathname === "/") pathname = "/index.html";
+  if (pathname === "/" || SPA_ROUTES.has(pathname)) pathname = "/index.html";
   const file = path.join(root, pathname);
   if (!file.startsWith(root)) {
     res.writeHead(403);
@@ -1678,4 +1723,13 @@ http.createServer((req, res) => {
   });
   trackingRefreshJob.start();
   virtualTradingJob.start();
+  startEtfStrategyRefreshJob({
+    isAshareTradingAutoRefreshTime,
+    refreshEtfStrategy,
+    refreshMs: ETF_STRATEGY_REFRESH_MS
+  });
+  startConcentrationArchiveJob({
+    archiveToday: concentrationService.archiveToday,
+    isAshareTradingAutoRefreshTime
+  });
 });

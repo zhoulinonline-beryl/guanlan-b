@@ -1,0 +1,1565 @@
+{
+  "updatedAt": "2026-06-23T10:43:27.631Z",
+  "products": [
+    {
+      "code": "159007",
+      "name": "养殖ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "养殖ETF华泰柏瑞",
+      "url": "/products/zhishu/159007/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "尤家妤"
+    },
+    {
+      "code": "513930",
+      "name": "恒生生物科技ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "恒生生物科技ETF华泰柏瑞",
+      "url": "/products/zhishu/513930/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "陈柯含"
+    },
+    {
+      "code": "512430",
+      "name": "家居家电ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "家居家电ETF华泰柏瑞",
+      "url": "/products/zhishu/512430/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "陈柯含"
+    },
+    {
+      "code": "025938",
+      "name": "华泰柏瑞恒生港股通高股息低波动ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞恒生港股通高股息低波动ETF发起式联接C",
+      "url": "/products/zhishu/025938/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "560400",
+      "name": "证券ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "证券ETF华泰柏瑞",
+      "url": "/products/zhishu/560400/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "159139",
+      "name": "科创创业人工智能ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "科创创业人工智能ETF华泰柏瑞",
+      "url": "/products/zhishu/159139/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "尤家妤"
+    },
+    {
+      "code": "025937",
+      "name": "华泰柏瑞恒生港股通高股息低波动ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞恒生港股通高股息低波动ETF发起式联接A",
+      "url": "/products/zhishu/025937/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "560490",
+      "name": "工业有色ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "工业有色ETF华泰柏瑞",
+      "url": "/products/zhishu/560490/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "561030",
+      "name": "工程机械ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "工程机械ETF华泰柏瑞",
+      "url": "/products/zhishu/561030/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "560910",
+      "name": "电池ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "电池ETF华泰柏瑞",
+      "url": "/products/zhishu/560910/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "尤家妤"
+    },
+    {
+      "code": "560670",
+      "name": "银行ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "银行ETF华泰柏瑞",
+      "url": "/products/zhishu/560670/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "510880",
+      "name": "红利ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "红利ETF华泰柏瑞",
+      "url": "/products/zhishu/510880/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军、李茜"
+    },
+    {
+      "code": "012761",
+      "name": "华泰柏瑞红利ETF联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞红利ETF联接A",
+      "url": "/products/zhishu/012761/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "012762",
+      "name": "华泰柏瑞红利ETF联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞红利ETF联接C",
+      "url": "/products/zhishu/012762/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "460220",
+      "name": "华泰柏瑞上证中小盘ETF联接",
+      "type": "指数型",
+      "fullName": "华泰柏瑞上证中小盘ETF联接",
+      "url": "/products/zhishu/460220/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": ""
+    },
+    {
+      "code": "510300",
+      "name": "沪深300ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "沪深300ETF华泰柏瑞",
+      "url": "/products/zhishu/510300/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军"
+    },
+    {
+      "code": "460300",
+      "name": "华泰柏瑞沪深300ETF联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞沪深300ETF联接A",
+      "url": "/products/zhishu/460300/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军"
+    },
+    {
+      "code": "006131",
+      "name": "华泰柏瑞沪深300ETF联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞沪深300ETF联接C",
+      "url": "/products/zhishu/006131/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军"
+    },
+    {
+      "code": "022699",
+      "name": "华泰柏瑞沪深300ETF联接I",
+      "type": "指数型",
+      "fullName": "华泰柏瑞沪深300ETF联接I",
+      "url": "/products/zhishu/022699/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军"
+    },
+    {
+      "code": "512510",
+      "name": "中证500ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "中证500ETF华泰柏瑞",
+      "url": "/products/zhishu/512510/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳叶青、胡亦清"
+    },
+    {
+      "code": "001214",
+      "name": "华泰柏瑞中证500ETF联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证500ETF联接A",
+      "url": "/products/zhishu/001214/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳叶青、胡亦清"
+    },
+    {
+      "code": "006087",
+      "name": "华泰柏瑞中证500ETF联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证500ETF联接C",
+      "url": "/products/zhishu/006087/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳叶青、胡亦清"
+    },
+    {
+      "code": "512520",
+      "name": "MSCI中国ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "MSCI中国ETF华泰柏瑞",
+      "url": "/products/zhishu/512520/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军"
+    },
+    {
+      "code": "006286",
+      "name": "MSCIETF联接A",
+      "type": "指数型",
+      "fullName": "MSCIETF联接A",
+      "url": "/products/zhishu/006286/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳军"
+    },
+    {
+      "code": "006293",
+      "name": "MSCIETF联接C",
+      "type": "指数型",
+      "fullName": "MSCIETF联接C",
+      "url": "/products/zhishu/006293/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳军"
+    },
+    {
+      "code": "512890",
+      "name": "红利低波ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "红利低波ETF华泰柏瑞",
+      "url": "/products/zhishu/512890/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军"
+    },
+    {
+      "code": "007466",
+      "name": "华泰柏瑞中证红利低波ETF联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证红利低波ETF联接A",
+      "url": "/products/zhishu/007466/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军"
+    },
+    {
+      "code": "007467",
+      "name": "华泰柏瑞中证红利低波ETF联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证红利低波ETF联接C",
+      "url": "/products/zhishu/007467/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军"
+    },
+    {
+      "code": "022678",
+      "name": "华泰柏瑞中证红利低波ETF联接I",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证红利低波ETF联接I",
+      "url": "/products/zhishu/022678/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军"
+    },
+    {
+      "code": "515580",
+      "name": "科技100ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "科技100ETF华泰柏瑞",
+      "url": "/products/zhishu/515580/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳叶青、胡亦清"
+    },
+    {
+      "code": "008399",
+      "name": "华泰柏瑞中证科技100ETF联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证科技100ETF联接A",
+      "url": "/products/zhishu/008399/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳叶青、胡亦清"
+    },
+    {
+      "code": "008400",
+      "name": "华泰柏瑞中证科技100ETF联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证科技100ETF联接C",
+      "url": "/products/zhishu/008400/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳叶青、胡亦清"
+    },
+    {
+      "code": "588090",
+      "name": "科创50ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "科创50ETF华泰柏瑞",
+      "url": "/products/zhishu/588090/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳军"
+    },
+    {
+      "code": "011610",
+      "name": "科创板ETF联接A",
+      "type": "指数型",
+      "fullName": "科创板ETF联接A",
+      "url": "/products/zhishu/011610/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳军"
+    },
+    {
+      "code": "011611",
+      "name": "科创板ETF联接C",
+      "type": "指数型",
+      "fullName": "科创板ETF联接C",
+      "url": "/products/zhishu/011611/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳军"
+    },
+    {
+      "code": "022679",
+      "name": "科创板ETF联接I",
+      "type": "指数型",
+      "fullName": "科创板ETF联接I",
+      "url": "/products/zhishu/022679/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳军"
+    },
+    {
+      "code": "515790",
+      "name": "光伏ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "光伏ETF华泰柏瑞",
+      "url": "/products/zhishu/515790/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李茜、李沐阳"
+    },
+    {
+      "code": "012679",
+      "name": "华泰柏瑞光伏ETF联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞光伏ETF联接A",
+      "url": "/products/zhishu/012679/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "012680",
+      "name": "华泰柏瑞光伏ETF联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞光伏ETF联接C",
+      "url": "/products/zhishu/012680/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "513550",
+      "name": "港股通50ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "港股通50ETF华泰柏瑞",
+      "url": "/products/zhishu/513550/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李茜"
+    },
+    {
+      "code": "012151",
+      "name": "港股通50ETF联接A",
+      "type": "指数型",
+      "fullName": "港股通50ETF联接A",
+      "url": "/products/zhishu/012151/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "何琦、李茜"
+    },
+    {
+      "code": "012152",
+      "name": "港股通50ETF联接C",
+      "type": "指数型",
+      "fullName": "港股通50ETF联接C",
+      "url": "/products/zhishu/012152/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "何琦、李茜"
+    },
+    {
+      "code": "517050",
+      "name": "互联网ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "互联网ETF华泰柏瑞",
+      "url": "/products/zhishu/517050/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "尤家妤"
+    },
+    {
+      "code": "516520",
+      "name": "智能驾驶ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "智能驾驶ETF华泰柏瑞",
+      "url": "/products/zhishu/516520/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "516770",
+      "name": "游戏ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "游戏ETF华泰柏瑞",
+      "url": "/products/zhishu/516770/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "胡亦清"
+    },
+    {
+      "code": "516780",
+      "name": "稀土ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "稀土ETF华泰柏瑞",
+      "url": "/products/zhishu/516780/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "014331",
+      "name": "华泰柏瑞中证稀土产业ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证稀土产业ETF发起式联接A",
+      "url": "/products/zhishu/014331/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "014332",
+      "name": "华泰柏瑞中证稀土产业ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证稀土产业ETF发起式联接C",
+      "url": "/products/zhishu/014332/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "516300",
+      "name": "中证1000ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "中证1000ETF华泰柏瑞",
+      "url": "/products/zhishu/516300/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳叶青、胡亦清"
+    },
+    {
+      "code": "516330",
+      "name": "物联网ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "物联网ETF华泰柏瑞",
+      "url": "/products/zhishu/516330/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳叶青"
+    },
+    {
+      "code": "513130",
+      "name": "恒生科技ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "恒生科技ETF华泰柏瑞",
+      "url": "/products/zhishu/513130/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳军"
+    },
+    {
+      "code": "015310",
+      "name": "华泰柏瑞恒生科技ETF联接(QDII)A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞恒生科技ETF联接(QDII)A",
+      "url": "/products/zhishu/015310/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳军"
+    },
+    {
+      "code": "015311",
+      "name": "华泰柏瑞恒生科技ETF联接(QDII)C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞恒生科技ETF联接(QDII)C",
+      "url": "/products/zhishu/015311/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳军"
+    },
+    {
+      "code": "022680",
+      "name": "华泰柏瑞恒生科技ETF联接(QDII)I",
+      "type": "指数型",
+      "fullName": "华泰柏瑞恒生科技ETF联接(QDII)I",
+      "url": "/products/zhishu/022680/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳军"
+    },
+    {
+      "code": "561500",
+      "name": "漂亮50ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "漂亮50ETF华泰柏瑞",
+      "url": "/products/zhishu/561500/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳叶青"
+    },
+    {
+      "code": "517120",
+      "name": "创新药ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "创新药ETF华泰柏瑞",
+      "url": "/products/zhishu/517120/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "陈柯含"
+    },
+    {
+      "code": "516790",
+      "name": "医疗ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "医疗ETF华泰柏瑞",
+      "url": "/products/zhishu/516790/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "陈柯含"
+    },
+    {
+      "code": "159773",
+      "name": "创业板科技ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "创业板科技ETF华泰柏瑞",
+      "url": "/products/zhishu/159773/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "尤家妤"
+    },
+    {
+      "code": "517880",
+      "name": "品牌消费ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "品牌消费ETF华泰柏瑞",
+      "url": "/products/zhishu/517880/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "陈柯含"
+    },
+    {
+      "code": "159738",
+      "name": "云计算ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "云计算ETF华泰柏瑞",
+      "url": "/products/zhishu/159738/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李茜"
+    },
+    {
+      "code": "019330",
+      "name": "华泰柏瑞中证沪港深云计算产业ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证沪港深云计算产业ETF发起式联接A",
+      "url": "/products/zhishu/019330/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李茜"
+    },
+    {
+      "code": "019331",
+      "name": "华泰柏瑞中证沪港深云计算产业ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证沪港深云计算产业ETF发起式联接C",
+      "url": "/products/zhishu/019331/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李茜"
+    },
+    {
+      "code": "513150",
+      "name": "港股通科技ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "港股通科技ETF华泰柏瑞",
+      "url": "/products/zhishu/513150/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "尤家妤"
+    },
+    {
+      "code": "561550",
+      "name": "中证500增强ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "中证500增强ETF华泰柏瑞",
+      "url": "/products/zhishu/561550/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军、笪篁"
+    },
+    {
+      "code": "513530",
+      "name": "港股通红利ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "港股通红利ETF华泰柏瑞",
+      "url": "/products/zhishu/513530/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "018387",
+      "name": "华泰柏瑞中证港股通高股息投资ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证港股通高股息投资ETF发起式联接A",
+      "url": "/products/zhishu/018387/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "018388",
+      "name": "华泰柏瑞中证港股通高股息投资ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证港股通高股息投资ETF发起式联接C",
+      "url": "/products/zhishu/018388/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "022663",
+      "name": "华泰柏瑞中证港股通高股息投资ETF发起式联接I",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证港股通高股息投资ETF发起式联接I",
+      "url": "/products/zhishu/022663/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "513110",
+      "name": "纳指ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "纳指ETF华泰柏瑞",
+      "url": "/products/zhishu/513110/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军、李沐阳"
+    },
+    {
+      "code": "019524",
+      "name": "华泰柏瑞纳斯达克100ETF发起式联接(QDII)A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞纳斯达克100ETF发起式联接(QDII)A",
+      "url": "/products/zhishu/019524/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "019525",
+      "name": "华泰柏瑞纳斯达克100ETF发起式联接(QDII)C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞纳斯达克100ETF发起式联接(QDII)C",
+      "url": "/products/zhishu/019525/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "022664",
+      "name": "华泰柏瑞纳斯达克100ETF发起式联接(QDII)I",
+      "type": "指数型",
+      "fullName": "华泰柏瑞纳斯达克100ETF发起式联接(QDII)I",
+      "url": "/products/zhishu/022664/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "561560",
+      "name": "电力ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "电力ETF华泰柏瑞",
+      "url": "/products/zhishu/561560/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "尤家妤"
+    },
+    {
+      "code": "018172",
+      "name": "华泰柏瑞中证全指电力ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证全指电力ETF发起式联接A",
+      "url": "/products/zhishu/018172/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "尤家妤"
+    },
+    {
+      "code": "018173",
+      "name": "华泰柏瑞中证全指电力ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证全指电力ETF发起式联接C",
+      "url": "/products/zhishu/018173/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "尤家妤"
+    },
+    {
+      "code": "561510",
+      "name": "中药ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "中药ETF华泰柏瑞",
+      "url": "/products/zhishu/561510/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "陈柯含"
+    },
+    {
+      "code": "159646",
+      "name": "疫苗ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "疫苗ETF华泰柏瑞",
+      "url": "/products/zhishu/159646/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": ""
+    },
+    {
+      "code": "513310",
+      "name": "中韩半导体ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "中韩半导体ETF华泰柏瑞",
+      "url": "/products/zhishu/513310/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳、柳军"
+    },
+    {
+      "code": "019454",
+      "name": "华泰柏瑞中韩半导体ETF发起式联接(QDII)A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中韩半导体ETF发起式联接(QDII)A",
+      "url": "/products/zhishu/019454/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "019455",
+      "name": "华泰柏瑞中韩半导体ETF发起式联接(QDII)C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中韩半导体ETF发起式联接(QDII)C",
+      "url": "/products/zhishu/019455/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "022681",
+      "name": "华泰柏瑞中韩半导体ETF发起式联接(QDII)I",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中韩半导体ETF发起式联接(QDII)I",
+      "url": "/products/zhishu/022681/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "561590",
+      "name": "中证1000增强ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "中证1000增强ETF华泰柏瑞",
+      "url": "/products/zhishu/561590/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳军、笪篁"
+    },
+    {
+      "code": "513140",
+      "name": "港股通金融ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "港股通金融ETF华泰柏瑞",
+      "url": "/products/zhishu/513140/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "561580",
+      "name": "央企红利ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "央企红利ETF华泰柏瑞",
+      "url": "/products/zhishu/561580/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "020466",
+      "name": "华泰柏瑞中证中央企业红利ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证中央企业红利ETF发起式联接A",
+      "url": "/products/zhishu/020466/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "020467",
+      "name": "华泰柏瑞中证中央企业红利ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证中央企业红利ETF发起式联接C",
+      "url": "/products/zhishu/020467/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "159693",
+      "name": "有色矿业ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "有色矿业ETF华泰柏瑞",
+      "url": "/products/zhishu/159693/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": ""
+    },
+    {
+      "code": "563300",
+      "name": "中证2000ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "中证2000ETF华泰柏瑞",
+      "url": "/products/zhishu/563300/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军、李沐阳"
+    },
+    {
+      "code": "019870",
+      "name": "华泰柏瑞中证2000ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证2000ETF发起式联接A",
+      "url": "/products/zhishu/019870/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "019871",
+      "name": "华泰柏瑞中证2000ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证2000ETF发起式联接C",
+      "url": "/products/zhishu/019871/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "563330",
+      "name": "A股ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "A股ETF华泰柏瑞",
+      "url": "/products/zhishu/563330/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军"
+    },
+    {
+      "code": "513730",
+      "name": "东南亚科技ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "东南亚科技ETF华泰柏瑞",
+      "url": "/products/zhishu/513730/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "020515",
+      "name": "华泰柏瑞东南亚科技ETF发起式联接(QDII)A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞东南亚科技ETF发起式联接(QDII)A",
+      "url": "/products/zhishu/020515/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "020516",
+      "name": "华泰柏瑞东南亚科技ETF发起式联接(QDII)C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞东南亚科技ETF发起式联接(QDII)C",
+      "url": "/products/zhishu/020516/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "588880",
+      "name": "科创100ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "科创100ETF华泰柏瑞",
+      "url": "/products/zhishu/588880/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "020320",
+      "name": "华泰柏瑞上证科创板100ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞上证科创板100ETF发起式联接A",
+      "url": "/products/zhishu/020320/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "020321",
+      "name": "华泰柏瑞上证科创板100ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞上证科创板100ETF发起式联接C",
+      "url": "/products/zhishu/020321/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "563350",
+      "name": "A50ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "A50ETF华泰柏瑞",
+      "url": "/products/zhishu/563350/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "021222",
+      "name": "华泰柏瑞中证A50ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证A50ETF发起式联接A",
+      "url": "/products/zhishu/021222/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "021223",
+      "name": "华泰柏瑞中证A50ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证A50ETF发起式联接C",
+      "url": "/products/zhishu/021223/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "022262",
+      "name": "华泰柏瑞中证A50ETF发起式联接E",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证A50ETF发起式联接E",
+      "url": "/products/zhishu/022262/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "021682",
+      "name": "华泰柏瑞创业板科技ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞创业板科技ETF发起式联接A",
+      "url": "/products/zhishu/021682/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "尤家妤"
+    },
+    {
+      "code": "021683",
+      "name": "华泰柏瑞创业板科技ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞创业板科技ETF发起式联接C",
+      "url": "/products/zhishu/021683/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "尤家妤"
+    },
+    {
+      "code": "520830",
+      "name": "沙特ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "沙特ETF华泰柏瑞",
+      "url": "/products/zhishu/520830/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "561570",
+      "name": "油气ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "油气ETF华泰柏瑞",
+      "url": "/products/zhishu/561570/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "520520",
+      "name": "恒生消费ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "恒生消费ETF华泰柏瑞",
+      "url": "/products/zhishu/520520/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "陈柯含"
+    },
+    {
+      "code": "024189",
+      "name": "华泰柏瑞恒生消费ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞恒生消费ETF发起式联接A",
+      "url": "/products/zhishu/024189/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "陈柯含"
+    },
+    {
+      "code": "024190",
+      "name": "华泰柏瑞恒生消费ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞恒生消费ETF发起式联接C",
+      "url": "/products/zhishu/024190/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "陈柯含"
+    },
+    {
+      "code": "520890",
+      "name": "港股通红利低波ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "港股通红利低波ETF华泰柏瑞",
+      "url": "/products/zhishu/520890/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "520500",
+      "name": "恒生创新药ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "恒生创新药ETF华泰柏瑞",
+      "url": "/products/zhishu/520500/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "陈柯含"
+    },
+    {
+      "code": "563360",
+      "name": "A500ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "A500ETF华泰柏瑞",
+      "url": "/products/zhishu/563360/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "022438",
+      "name": "华泰柏瑞中证A500ETF联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证A500ETF联接A",
+      "url": "/products/zhishu/022438/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "022439",
+      "name": "华泰柏瑞中证A500ETF联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证A500ETF联接C",
+      "url": "/products/zhishu/022439/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "022742",
+      "name": "华泰柏瑞中证A500ETF联接I",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证A500ETF联接I",
+      "url": "/products/zhishu/022742/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "588230",
+      "name": "科创200ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "科创200ETF华泰柏瑞",
+      "url": "/products/zhishu/588230/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "530300",
+      "name": "上证180ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "上证180ETF华泰柏瑞",
+      "url": "/products/zhishu/530300/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳叶青"
+    },
+    {
+      "code": "159383",
+      "name": "创业板50ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "创业板50ETF华泰柏瑞",
+      "url": "/products/zhishu/159383/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳叶青"
+    },
+    {
+      "code": "023179",
+      "name": "华泰柏瑞上证180ETF联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞上证180ETF联接A",
+      "url": "/products/zhishu/023179/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳叶青"
+    },
+    {
+      "code": "023180",
+      "name": "华泰柏瑞上证180ETF联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞上证180ETF联接C",
+      "url": "/products/zhishu/023180/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳叶青"
+    },
+    {
+      "code": "023181",
+      "name": "华泰柏瑞上证180ETF联接I",
+      "type": "指数型",
+      "fullName": "华泰柏瑞上证180ETF联接I",
+      "url": "/products/zhishu/023181/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳叶青"
+    },
+    {
+      "code": "023382",
+      "name": "华泰柏瑞上证科创板200ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞上证科创板200ETF发起式联接A",
+      "url": "/products/zhishu/023382/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "589990",
+      "name": "科创综指ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "科创综指ETF华泰柏瑞",
+      "url": "/products/zhishu/589990/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "023741",
+      "name": "华泰柏瑞上证科创板综合ETF联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞上证科创板综合ETF联接A",
+      "url": "/products/zhishu/023741/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "023742",
+      "name": "华泰柏瑞上证科创板综合ETF联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞上证科创板综合ETF联接C",
+      "url": "/products/zhishu/023742/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "023383",
+      "name": "华泰柏瑞上证科创板200ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞上证科创板200ETF发起式联接C",
+      "url": "/products/zhishu/023383/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "023388",
+      "name": "华泰柏瑞上证科创板200ETF发起式联接I",
+      "type": "指数型",
+      "fullName": "华泰柏瑞上证科创板200ETF发起式联接I",
+      "url": "/products/zhishu/023388/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "023832",
+      "name": "华泰柏瑞中证油气产业ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证油气产业ETF发起式联接A",
+      "url": "/products/zhishu/023832/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "023833",
+      "name": "华泰柏瑞中证油气产业ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证油气产业ETF发起式联接C",
+      "url": "/products/zhishu/023833/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "023830",
+      "name": "华泰柏瑞创业板50ETF联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞创业板50ETF联接A",
+      "url": "/products/zhishu/023830/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳叶青"
+    },
+    {
+      "code": "023831",
+      "name": "华泰柏瑞创业板50ETF联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞创业板50ETF联接C",
+      "url": "/products/zhishu/023831/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳叶青"
+    },
+    {
+      "code": "563390",
+      "name": "全指现金流ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "全指现金流ETF华泰柏瑞",
+      "url": "/products/zhishu/563390/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "胡亦清"
+    },
+    {
+      "code": "024622",
+      "name": "华泰柏瑞中证全指自由现金流ETF联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证全指自由现金流ETF联接A",
+      "url": "/products/zhishu/024622/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "胡亦清"
+    },
+    {
+      "code": "024623",
+      "name": "华泰柏瑞中证全指自由现金流ETF联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证全指自由现金流ETF联接C",
+      "url": "/products/zhishu/024623/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "胡亦清"
+    },
+    {
+      "code": "588710",
+      "name": "科创半导体设备ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "科创半导体设备ETF华泰柏瑞",
+      "url": "/products/zhishu/588710/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "024739",
+      "name": "华泰柏瑞中证港股通科技ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证港股通科技ETF发起式联接A",
+      "url": "/products/zhishu/024739/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "谭弘翔、尤家妤"
+    },
+    {
+      "code": "024740",
+      "name": "华泰柏瑞中证港股通科技ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证港股通科技ETF发起式联接C",
+      "url": "/products/zhishu/024740/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "尤家妤、谭弘翔"
+    },
+    {
+      "code": "023554",
+      "name": "华泰柏瑞中证A股ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证A股ETF发起式联接C",
+      "url": "/products/zhishu/023554/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军"
+    },
+    {
+      "code": "023553",
+      "name": "华泰柏瑞中证A股ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证A股ETF发起式联接A",
+      "url": "/products/zhishu/023553/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军"
+    },
+    {
+      "code": "024974",
+      "name": "华泰柏瑞上证科创板半导体材料设备主题ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞上证科创板半导体材料设备主题ETF发起式联接A",
+      "url": "/products/zhishu/024974/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "024975",
+      "name": "华泰柏瑞上证科创板半导体材料设备主题ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞上证科创板半导体材料设备主题ETF发起式联接C",
+      "url": "/products/zhishu/024975/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "李沐阳"
+    },
+    {
+      "code": "563320",
+      "name": "通用航空ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "通用航空ETF华泰柏瑞",
+      "url": "/products/zhishu/563320/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "563380",
+      "name": "航空航天ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "航空航天ETF华泰柏瑞",
+      "url": "/products/zhishu/563380/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "谭弘翔"
+    },
+    {
+      "code": "027603",
+      "name": "华泰柏瑞恒生生物科技ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞恒生生物科技ETF发起式联接C",
+      "url": "/products/zhishu/027603/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "陈柯含"
+    },
+    {
+      "code": "027796",
+      "name": "华泰柏瑞中证全指证券公司ETF发起式联接C",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证全指证券公司ETF发起式联接C",
+      "url": "/products/zhishu/027796/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "027795",
+      "name": "华泰柏瑞中证全指证券公司ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞中证全指证券公司ETF发起式联接A",
+      "url": "/products/zhishu/027795/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "李茜"
+    },
+    {
+      "code": "027602",
+      "name": "华泰柏瑞恒生生物科技ETF发起式联接A",
+      "type": "指数型",
+      "fullName": "华泰柏瑞恒生生物科技ETF发起式联接A",
+      "url": "/products/zhishu/027602/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "陈柯含"
+    },
+    {
+      "code": "561630",
+      "name": "红利质量ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "红利质量ETF华泰柏瑞",
+      "url": "/products/zhishu/561630/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳叶青"
+    },
+    {
+      "code": "561620",
+      "name": "化工ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "化工ETF华泰柏瑞",
+      "url": "/products/zhishu/561620/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "陈柯含"
+    },
+    {
+      "code": "159069",
+      "name": "创业板新能源ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "创业板新能源ETF华泰柏瑞",
+      "url": "/products/zhishu/159069/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳叶青"
+    },
+    {
+      "code": "510220",
+      "name": "中小盘ETF华泰柏瑞",
+      "type": "指数型",
+      "fullName": "中小盘ETF华泰柏瑞",
+      "url": "/products/zhishu/510220/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": ""
+    },
+    {
+      "code": "551510",
+      "name": "科创债ETF华泰柏瑞",
+      "type": "债券型",
+      "fullName": "科创债ETF华泰柏瑞",
+      "url": "/products/zhaiquan/551510/index.html",
+      "buyable": false,
+      "risk": "R2",
+      "manager": "何子建、李茜"
+    },
+    {
+      "code": "511830",
+      "name": "货币ETF华泰柏瑞",
+      "type": "货币型",
+      "fullName": "货币ETF华泰柏瑞",
+      "url": "/products/huobi/511830/index.html",
+      "buyable": false,
+      "risk": "R1",
+      "manager": "郑青"
+    },
+    {
+      "code": "022948",
+      "name": "华泰柏瑞沪深300ETF联接Y",
+      "type": "养老份额",
+      "fullName": "华泰柏瑞沪深300ETF联接Y",
+      "url": "/products/yanglao/022948/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军"
+    },
+    {
+      "code": "022951",
+      "name": "华泰柏瑞中证红利低波ETF联接Y",
+      "type": "养老份额",
+      "fullName": "华泰柏瑞中证红利低波ETF联接Y",
+      "url": "/products/yanglao/022951/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "柳军"
+    },
+    {
+      "code": "022950",
+      "name": "科创板ETF联接Y",
+      "type": "养老份额",
+      "fullName": "科创板ETF联接Y",
+      "url": "/products/yanglao/022950/index.html",
+      "buyable": false,
+      "risk": "R4",
+      "manager": "柳军"
+    },
+    {
+      "code": "022947",
+      "name": "华泰柏瑞中证A500ETF联接Y",
+      "type": "养老份额",
+      "fullName": "华泰柏瑞中证A500ETF联接Y",
+      "url": "/products/yanglao/022947/index.html",
+      "buyable": false,
+      "risk": "R3",
+      "manager": "谭弘翔"
+    }
+  ]
+}
