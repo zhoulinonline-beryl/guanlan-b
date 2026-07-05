@@ -49,6 +49,16 @@ function loadAdvisorDeepThinking() {
   }
 }
 
+const cnMarketClosedDates2026 = new Set([
+  "2026-01-01", "2026-01-02", "2026-01-03",
+  "2026-02-15", "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20", "2026-02-21", "2026-02-22", "2026-02-23",
+  "2026-04-04", "2026-04-05", "2026-04-06",
+  "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05",
+  "2026-06-19", "2026-06-20", "2026-06-21",
+  "2026-09-25", "2026-09-26", "2026-09-27",
+  "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06", "2026-10-07"
+]);
+
 const state = {
   page: "home",
   window: 5,
@@ -87,6 +97,11 @@ const state = {
   concentrationLoading: false,
   concentrationError: "",
   concentrationHistoryWindow: 60,
+  goldenPins: [],
+  goldenPinMeta: null,
+  goldenPinLoading: false,
+  goldenPinError: "",
+  goldenPinDate: latestTradingDay(),
   concentrationHistory: [],
   virtualBacktestStart: "",
   virtualBacktestEnd: "",
@@ -141,15 +156,6 @@ const state = {
 const sectorPageSize = 9;
 const homeRefreshMs = 60_000;
 const recommendRefreshMs = 15 * 60_000;
-const cnMarketClosedDates2026 = new Set([
-  "2026-01-01", "2026-01-02", "2026-01-03",
-  "2026-02-15", "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20", "2026-02-21", "2026-02-22", "2026-02-23",
-  "2026-04-04", "2026-04-05", "2026-04-06",
-  "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05",
-  "2026-06-19", "2026-06-20", "2026-06-21",
-  "2026-09-25", "2026-09-26", "2026-09-27",
-  "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06", "2026-10-07"
-]);
 
 function defaultBacktestRange() {
   const end = new Date();
@@ -214,7 +220,8 @@ const icons = {
   chat: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 9h8"/><path d="M8 13h5"/></svg>`,
   arrow: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>`,
   etf: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h10"/><path d="M7 12h10"/><path d="M7 17h6"/></svg>`,
-  indicator: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 12 12"/><path d="M12 12 6 22"/><path d="M12 12 18 22"/><path d="M12 12 4 10"/><path d="M12 12 20 10"/></svg>`
+  indicator: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 12 12"/><path d="M12 12 6 22"/><path d="M12 12 18 22"/><path d="M12 12 4 10"/><path d="M12 12 20 10"/></svg>`,
+  pin: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20"/><path d="M9 7h6"/><path d="M9 17h6"/></svg>`
 };
 
 function update(patch) {
@@ -271,6 +278,7 @@ function startAppDataOnce() {
   loadVirtualTrading({ silent: true });
   loadEtfStrategy({ silent: true });
   loadConcentration({ silent: true });
+  loadGoldenPins({ silent: true });
   loadAdminStatus();
 }
 
@@ -1017,6 +1025,29 @@ function isAshareTradingAutoRefreshTime(now = new Date()) {
   return inMorning || inAfternoon;
 }
 
+function previousTradingDay(fromDateText = chinaMarketNow().date) {
+  const parts = fromDateText.split("-");
+  const date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 12, 0, 0);
+  for (let i = 0; i < 30; i += 1) {
+    date.setDate(date.getDate() - 1);
+    const text = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(date);
+    const weekday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", weekday: "short" }).format(date);
+    if (weekday !== "Sat" && weekday !== "Sun" && !cnMarketClosedDates2026.has(text)) {
+      return text;
+    }
+  }
+  return fromDateText;
+}
+
+function latestTradingDay(fromDateText = chinaMarketNow().date) {
+  const parts = fromDateText.split("-");
+  const date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 12, 0, 0);
+  const text = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(date);
+  const weekday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", weekday: "short" }).format(date);
+  if (weekday !== "Sat" && weekday !== "Sun" && !cnMarketClosedDates2026.has(text)) return text;
+  return previousTradingDay(fromDateText);
+}
+
 function requestAutoRefresh(scope = "home") {
   if (!isAppAuthenticated()) return;
   if (!isAshareTradingAutoRefreshTime()) return;
@@ -1201,7 +1232,16 @@ async function api(path, options = {}) {
       ...(options.headers || {})
     }
   });
-  const json = await res.json();
+  const text = await res.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    if (text.trimStart().startsWith("<")) {
+      throw new Error("行情接口返回 HTML 错误页（可能是网关超时或服务未就绪），请稍后刷新重试");
+    }
+    throw new Error("行情接口返回格式异常，请稍后刷新重试");
+  }
   if (!json.ok) {
     const error = new Error(json.error || "行情接口异常");
     error.code = json.code || "";
@@ -1221,7 +1261,16 @@ async function adminFetch(path, options = {}) {
     cache: "no-store",
     headers: adminHeaders(options.headers || {})
   });
-  const json = await res.json();
+  const text = await res.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    if (text.trimStart().startsWith("<")) {
+      throw new Error("服务端返回 HTML 错误页（可能是网关超时或服务未就绪），请稍后刷新重试");
+    }
+    throw new Error("服务端返回格式异常，请稍后刷新重试");
+  }
   if (!json.ok) {
     const error = new Error(json.error || "请求失败");
     error.code = json.code || "";
@@ -1274,6 +1323,7 @@ async function loadSectors({ silent = false, clearStockCache = false, deferForOv
     setTimeout(() => ensureSectorStockIndex(), 0);
     if (state.page === "sector") loadStocks(state.selectedSectorId);
     if (state.page === "recommend") loadRecommendations();
+    if (state.page === "goldenPin") loadGoldenPins();
     if (state.page === "indicator") loadConcentration();
   } catch (error) {
     update({ loading: false, error: error.message });
@@ -1618,6 +1668,35 @@ async function loadRecommendations({ force = false } = {}) {
     });
   } catch (error) {
     update({ recLoading: false, error: error.message });
+  }
+}
+
+async function loadGoldenPins({ force = false, silent = false, date = state.goldenPinDate } = {}) {
+  if (!silent) update({ goldenPinLoading: true, goldenPinError: "" });
+  try {
+    const encodedDate = encodeURIComponent(date || latestTradingDay());
+    const json = force
+      ? await api("/api/golden-pins/refresh", {
+          method: "POST",
+          body: JSON.stringify({ date: date || latestTradingDay() })
+        })
+      : await api(`/api/golden-pins?date=${encodedDate}`);
+    update({
+      goldenPins: json.data?.pins || [],
+      goldenPinMeta: {
+        status: json.data?.status,
+        error: json.data?.error,
+        date: json.data?.date || date,
+        refreshedAt: json.data?.refreshedAt,
+        nextRefreshAt: json.data?.nextRefreshAt,
+        scannedCount: json.data?.scannedCount,
+        qualifiedCount: json.data?.qualifiedCount
+      },
+      goldenPinLoading: false,
+      updatedAt: json.data?.refreshedAt || state.updatedAt
+    });
+  } catch (error) {
+    update({ goldenPinLoading: false, goldenPinError: error.message });
   }
 }
 
@@ -2559,6 +2638,7 @@ function shell(content) {
   const titles = {
     home: ["全景雷达", "主要指数、板块行情、主力方向与雷达解释合并呈现"],
     recommend: ["股票推荐", "主力方向明显且适合当下建仓的跨板块候选"],
+    goldenPin: ["金针探底", "从前一日 A 股中筛选长下影、低位、带确认的金针形态"],
     indicator: ["指标风向", "超头部成交集中度与市场资金抱团趋势"],
     etf: ["ETF 策略", "基于华泰柏瑞 ETF 与全景雷达板块评分的中期/短期 Top5 推荐"],
     portfolio: ["我的持股", "上传截图更新持股，持久化保存后结合板块、行情与新闻政策给出操作建议"],
@@ -2578,6 +2658,7 @@ function shell(content) {
         <nav class="nav">
           ${navButton("home", "全景雷达", icons.radar)}
           ${navButton("recommend", "股票推荐", icons.home)}
+          ${navButton("goldenPin", "金针探底", icons.pin)}
           ${navButton("indicator", "指标风向", icons.indicator)}
           ${navButton("etf", "ETF 策略", icons.etf)}
           ${navButton("portfolio", "我的持股", icons.list)}
@@ -3158,6 +3239,111 @@ function recommendPage() {
   `;
 }
 
+function goldenPinPage() {
+  const meta = state.goldenPinMeta || {};
+  const pins = state.goldenPins || [];
+  const strong = pins.filter((item) => item.signal === "trigger" || item.signal === "strong");
+  const watch = pins.filter((item) => item.signal === "watch");
+  const refreshedAt = meta.refreshedAt ? new Date(meta.refreshedAt).toLocaleString("zh-CN") : "--";
+  const currentDate = state.goldenPinDate || latestTradingDay();
+  const isLatestDay = currentDate === latestTradingDay();
+
+  return `
+    <div class="section-head first-section">
+      <div>
+        <h2>金针探底</h2>
+        <span class="hint">${isLatestDay ? "最近交易日使用无确认分模式：形态分 0~40 + 位置分 0~30，满分 70，作为超短线初选；历史交易日仍使用形态分 + 位置分 + 确认分 = 100" : "加权布尔+连续变量混合评分：形态分 0~40 + 位置分 0~30 + 确认分 0~30；≥70 强信号，≥85 且支撑位+均线共振可触发入场"}</span>
+      </div>
+      <div class="controls">
+        <label class="golden-pin-date">
+          <span>分析日期</span>
+          <input type="date" data-golden-pin-date value="${escapeHtml(currentDate)}" max="${escapeHtml(latestTradingDay())}" />
+        </label>
+        <button class="ghost" data-action="refresh-golden-pins" title="刷新金针探底">${icons.refresh}刷新</button>
+      </div>
+    </div>
+    <section class="quote-strip golden-pin-strip">
+      <div><span>分析日期</span><strong>${escapeHtml(meta.date || currentDate)}</strong></div>
+      <div><span>扫描样本</span><strong>${Number.isFinite(meta.scannedCount) ? meta.scannedCount : "--"}只</strong></div>
+      <div><span>符合条件</span><strong>${pins.length}只</strong></div>
+      <div><span>强信号/触发</span><strong>${strong.length}只</strong></div>
+      <div><span>后台状态</span><strong>${meta.status === "running" ? "扫描中" : meta.status === "error" ? "异常" : "已就绪"}</strong></div>
+      <div><span>更新时间</span><strong>${refreshedAt}</strong></div>
+    </section>
+    ${state.goldenPinError ? `<div class="panel empty down">${escapeHtml(state.goldenPinError)}</div>` : ""}
+    ${state.goldenPinLoading ? loadingView() : ""}
+    ${goldenPinSection("触发入场 / 强信号", strong.filter((item) => item.signal === "trigger").concat(strong.filter((item) => item.signal === "strong")), "trigger")}
+    ${goldenPinSection("观察池", watch, "watch")}
+    ${!state.goldenPinLoading && !pins.length ? `<div class="panel empty">暂无符合金针探底条件的股票，可点击刷新重算。</div>` : ""}
+  `;
+}
+
+function goldenPinSection(title, items, type) {
+  if (!items.length) return "";
+  const isLatestDay = (state.goldenPinDate || latestTradingDay()) === latestTradingDay();
+  return `
+    <section class="golden-pin-section">
+      <div class="section-head recommend-subhead">
+        <div>
+          <h2>${title}</h2>
+          <span class="hint">${type === "trigger" ? "满足触发入场或强信号条件" : isLatestDay ? "最近交易日无次日确认数据，仅按形态+位置做超短线初选" : "形态初现，继续观察次日确认"}</span>
+        </div>
+      </div>
+      <div class="golden-pin-grid">
+        ${items.map((stock, index) => goldenPinCard(stock, index + 1)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function goldenPinCard(stock, rank) {
+  const signalClass = stock.signal === "trigger" ? "trigger" : stock.signal === "strong" ? "strong" : "watch";
+  const signalLabel = stock.signal === "trigger" ? "触发入场" : stock.signal === "strong" ? "强信号" : "观察";
+  const details = stock.patternDetails || {};
+  const position = stock.positionDetails || {};
+  const confirm = stock.confirmDetails || {};
+  const hasConfirm = stock.hasConfirm !== false;
+  return `
+    <article class="card golden-pin-card" data-stock="${stock.code}">
+      <div class="golden-pin-head">
+        <span class="rank-badge">#${rank}</span>
+        <div>
+          <strong>${stock.name}</strong>
+          <small>${stock.code}${stock.industry ? ` · ${stock.industry}` : ""}</small>
+        </div>
+        <div class="golden-pin-score ${signalClass}">
+          <span>${signalLabel}</span>
+          <b>${fmt(stock.score, 1)}</b>
+        </div>
+      </div>
+      <div class="golden-pin-quote">
+        <span>现价 <b>${fmt(stock.price)}</b></span>
+        <span>涨跌 <b class="${pctClass(stock.pct)}">${stock.pct > 0 ? "+" : ""}${fmt(stock.pct)}%</b></span>
+        <span>成交 <b>${money(stock.amount)}</b></span>
+      </div>
+      <div class="golden-pin-breakdown">
+        <div><span>形态分</span><strong>${fmt(stock.patternScore, 1)}</strong></div>
+        <div><span>位置分</span><strong>${fmt(stock.positionScore, 1)}</strong></div>
+        <div><span>确认分</span><strong>${hasConfirm ? fmt(stock.confirmScore, 1) : "--"}</strong></div>
+      </div>
+      <div class="golden-pin-levels">
+        <span>针尖 ${fmt(stock.pinLow)}</span>
+        <span>针顶 ${fmt(stock.pinHigh)}</span>
+        <span>收盘 ${fmt(stock.pinClose)}</span>
+        <span>MA30 ${fmt(stock.ma30)}</span>
+      </div>
+      <div class="golden-pin-metrics">
+        <span>下影/实体 ${Number.isFinite(details.lowerShadowBodyRatio) ? fmt(details.lowerShadowBodyRatio, 2) : "--"}</span>
+        <span>下影/振幅 ${Number.isFinite(details.lowerShadowRangeRatio) ? fmt(details.lowerShadowRangeRatio, 2) : "--"}</span>
+        <span>量能比 ${hasConfirm && confirm.volumeRatio ? fmt(confirm.volumeRatio, 2) : "--"}</span>
+        <span>次日不破针尖 ${hasConfirm ? (confirm.tipHold ? "是" : "否") : "--"}</span>
+        <span>次日阳线 ${hasConfirm ? (confirm.nextDayYang ? "是" : "否") : "--"}</span>
+      </div>
+      <p>${stock.reason}</p>
+    </article>
+  `;
+}
+
 function etfStrategyPage() {
   const data = state.etfStrategy || {};
   const loading = state.etfStrategyLoading;
@@ -3332,12 +3518,15 @@ function indicatorPage() {
 function concentrationCard(title, dim = {}) {
   const level = dim.level || "数据不足";
   const colorClass = dim.color || "gray";
-  const change = Number(dim.ratio) - Number((dim.prevRatio || dim.ratio));
+  const change = Number.isFinite(dim.change) ? Number(dim.change) : null;
+  const changeText = change === null
+    ? "--"
+    : `${change >= 0 ? "+" : ""}${fmt(change, 2)}%`;
   return `
     <div class="card concentration-card ${colorClass}">
       <div class="concentration-title">${escapeHtml(title)}</div>
       <div class="concentration-value">${fmt(dim.ratio, 2)}%</div>
-      <div class="concentration-change ${pctClass(change)}">${change >= 0 ? "+" : ""}${fmt(change, 2)}%</div>
+      <div class="concentration-change ${change === null ? "flat" : pctClass(change)}">${changeText}</div>
       <div class="concentration-level">${escapeHtml(level)}</div>
       <div class="concentration-percentile">历史分位 ${dim.percentile ?? "--"}%</div>
     </div>
@@ -6624,7 +6813,7 @@ function render(scrollAnchor = captureScrollAnchors()) {
   const stockScroll = captureStockModalScroll();
   skipAdvisorFocusRestoreOnce = false;
   if (state.page === "radar" || state.page === "sector") state.page = "home";
-  const pages = { home: homePage, recommend: recommendPage, indicator: indicatorPage, etf: etfStrategyPage, portfolio: portfolioPage, tracking: trackingPage, virtual: virtualTradingPage, discussion: discussionPage, settings: settingsPage };
+  const pages = { home: homePage, recommend: recommendPage, goldenPin: goldenPinPage, indicator: indicatorPage, etf: etfStrategyPage, portfolio: portfolioPage, tracking: trackingPage, virtual: virtualTradingPage, discussion: discussionPage, settings: settingsPage };
   suppressScrollTracking = true;
   app.innerHTML = shell(pages[state.page]());
   restoreScrollAnchors(scrollAnchor);
@@ -6756,6 +6945,7 @@ app.addEventListener("click", (event) => {
     runButtonAction(event.target, "切换页面", async () => {
       update({ page });
       if (page === "recommend") await loadRecommendations();
+      if (page === "goldenPin") await loadGoldenPins();
       if (page === "indicator") await loadConcentration();
       if (page === "etf") await loadEtfStrategy();
       if (page === "tracking") await loadTracking();
@@ -6860,6 +7050,7 @@ app.addEventListener("click", (event) => {
       state.sectorStockIndexLoading = false;
       await loadSectors({ silent: true, clearStockCache: true });
       if (state.page === "recommend") await loadRecommendations({ force: true });
+      if (state.page === "goldenPin") await loadGoldenPins({ force: true });
       if (state.page === "indicator") await loadConcentration({ force: true });
       if (state.page === "etf") await loadEtfStrategy({ force: true });
       if (state.page === "tracking") await loadTracking({ force: true });
@@ -6869,6 +7060,10 @@ app.addEventListener("click", (event) => {
   }
   if (event.target.closest("[data-action='refresh-concentration']")) {
     runButtonAction(event.target, "刷新集中度", () => loadConcentration({ force: true }), { successToast: true });
+    return;
+  }
+  if (event.target.closest("[data-action='refresh-golden-pins']")) {
+    runButtonAction(event.target, "刷新金针探底", () => loadGoldenPins({ force: true }), { successToast: true });
     return;
   }
   if (event.target.closest("[data-action='archive-concentration']")) {
@@ -7045,6 +7240,13 @@ app.addEventListener("change", (event) => {
   if (event.target.matches("[data-select-sector]")) {
     update({ selectedSectorId: event.target.value });
     loadStocks(event.target.value);
+  }
+  if (event.target.matches("[data-golden-pin-date]")) {
+    const date = event.target.value;
+    if (date && date !== state.goldenPinDate) {
+      update({ goldenPinDate: date });
+      loadGoldenPins({ date });
+    }
   }
   if (event.target.matches("[data-position-image]") && event.target.files?.[0]) {
     recognizePositionImage(event.target.files[0]);
@@ -7306,7 +7508,7 @@ app.addEventListener("scroll", (event) => {
 
 function initPageFromUrl() {
   const validPages = new Set([
-    "home", "recommend", "indicator", "etf", "portfolio",
+    "home", "recommend", "goldenPin", "indicator", "etf", "portfolio",
     "tracking", "virtual", "discussion", "settings"
   ]);
   const page = window.location.pathname.replace(/^\//, "").split("/")[0];
@@ -7329,3 +7531,6 @@ setInterval(() => {
 setInterval(() => {
   if (isAppAuthenticated() && state.page === "indicator" && isAshareTradingAutoRefreshTime()) loadConcentration({ force: true, silent: true });
 }, 5 * 60_000);
+setInterval(() => {
+  if (isAppAuthenticated() && state.page === "goldenPin" && isAshareTradingAutoRefreshTime()) loadGoldenPins({ force: true, silent: true });
+}, 30 * 60_000);

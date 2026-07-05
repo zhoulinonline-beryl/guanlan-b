@@ -9,6 +9,8 @@ function createApiRouter(deps) {
     writeAppSettings,
     clearRuntimeCache,
     loadPersistentCache,
+    clearMarketCache,
+    marketDataCache,
     advisorChat,
     makeRequestId,
     redactLogText,
@@ -58,6 +60,8 @@ function createApiRouter(deps) {
     saveVirtualStockStrategy,
     refreshEtfStrategy,
     readEtfStrategyStore,
+    refreshGoldenPins,
+    goldenPinSnapshot,
     getEtfProductInfo,
     getConcentration,
     getConcentrationHistory,
@@ -151,7 +155,18 @@ function createApiRouter(deps) {
       } else if (!current.useCache && settings.useCache) {
         loadPersistentCache();
       }
+      if (current.marketDataSource !== settings.marketDataSource) {
+        clearMarketCache();
+      }
       return { data: publicSettings(settings) };
+    }],
+    ["GET", "/api/cache/stats", async () => {
+      if (!marketDataCache) return { data: { enabled: false } };
+      return { data: { enabled: true, ...marketDataCache.stats() } };
+    }],
+    ["POST", "/api/cache/clear", async () => {
+      clearMarketCache();
+      return { data: { ok: true } };
     }],
     ["POST", "/api/advisor-chat", async ({ req, res }) => {
       const body = await readJsonBody(req);
@@ -475,6 +490,39 @@ function createApiRouter(deps) {
           refreshedAt: result.refreshedAt,
           mediumTop5: result.mediumTop5 || [],
           shortTop5: result.shortTop5 || []
+        }
+      };
+    }],
+    ["GET", "/api/golden-pins", async ({ url }) => {
+      const force = url.searchParams.get("force") === "1";
+      const date = url.searchParams.get("date") || "";
+      const cache = await refreshGoldenPins({ force, date });
+      return {
+        data: {
+          status: cache.status,
+          error: cache.error,
+          date: cache.date,
+          refreshedAt: cache.refreshedAt,
+          nextRefreshAt: cache.nextRefreshAt,
+          scannedCount: cache.scannedCount,
+          qualifiedCount: cache.qualifiedCount,
+          pins: cache.data || []
+        }
+      };
+    }],
+    ["POST", "/api/golden-pins/refresh", async ({ req }) => {
+      const body = await readJsonBody(req);
+      const cache = await refreshGoldenPins({ force: true, date: body?.date || "" });
+      return {
+        data: {
+          status: cache.status,
+          error: cache.error,
+          date: cache.date,
+          refreshedAt: cache.refreshedAt,
+          nextRefreshAt: cache.nextRefreshAt,
+          scannedCount: cache.scannedCount,
+          qualifiedCount: cache.qualifiedCount,
+          pins: cache.data || []
         }
       };
     }],

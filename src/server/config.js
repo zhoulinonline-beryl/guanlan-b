@@ -27,6 +27,7 @@ loadLocalEnv();
 const PORT = Number(process.env.PORT || 5173);
 const HOST = "127.0.0.1";
 const RECOMMEND_REFRESH_MS = 15 * 60 * 1000;
+const GOLDEN_PIN_REFRESH_MS = 30 * 60 * 1000;
 const EASTMONEY_UT = "b2884a393a59ad64002292a3e90d46a5";
 
 const DATA_DIR = process.env.GUANLAN_DATA_DIR ? path.resolve(process.env.GUANLAN_DATA_DIR) : path.join(root, "data");
@@ -38,6 +39,7 @@ const MARKET_SNAPSHOT_FILE = process.env.GUANLAN_MARKET_SNAPSHOT_FILE || path.jo
 const TRACKING_FILE = process.env.GUANLAN_TRACKING_FILE || path.join(DATA_DIR, "tracking.json");
 const VIRTUAL_TRADING_FILE = process.env.GUANLAN_VIRTUAL_TRADING_FILE || path.join(DATA_DIR, "virtual-trading.json");
 const ETF_STRATEGY_FILE = process.env.GUANLAN_ETF_STRATEGY_FILE || path.join(DATA_DIR, "etf-strategy.json");
+const GOLDEN_PIN_FILE = process.env.GUANLAN_GOLDEN_PIN_FILE || path.join(DATA_DIR, "golden-pins.json");
 const CONCENTRATION_HISTORY_FILE = process.env.GUANLAN_CONCENTRATION_HISTORY_FILE || path.join(DATA_DIR, "concentration-history.json");
 const CONCENTRATION_HISTORY_MAX_DAYS = 500;
 const CONCENTRATION_CACHE_TTL_TRADING_MS = 5 * 60 * 1000;
@@ -157,11 +159,13 @@ module.exports = {
   TRACKING_FILE,
   VIRTUAL_TRADING_FILE,
   ETF_STRATEGY_FILE,
+  GOLDEN_PIN_FILE,
   CONCENTRATION_HISTORY_FILE,
   CONCENTRATION_HISTORY_MAX_DAYS,
   CONCENTRATION_CACHE_TTL_TRADING_MS,
   CONCENTRATION_CACHE_TTL_IDLE_MS,
   ETF_STRATEGY_REFRESH_MS,
+  GOLDEN_PIN_REFRESH_MS,
   AI_PROVIDERS,
   DEFAULT_SETTINGS,
   CN_MARKET_CLOSED_DATES_2026,

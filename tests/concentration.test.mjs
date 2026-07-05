@@ -95,6 +95,49 @@ describe("concentration calculation", () => {
     assert.equal(result.top5pct.percentile, 50);
   });
 
+  it("attaches day-over-day change to dimensions", () => {
+    const current = {
+      top25: { ratio: 12 },
+      top1pct: { ratio: 18 },
+      top5pct: { ratio: 35 }
+    };
+    const history = [
+      { date: "2026-06-27", dimensions: { top25: { ratio: 10 }, top1pct: { ratio: 15 }, top5pct: { ratio: 30 } } },
+      { date: "2026-06-28", dimensions: { top25: { ratio: 11 }, top1pct: { ratio: 16 }, top5pct: { ratio: 33 } } }
+    ];
+    const result = concentration.attachChanges(current, history, "2026-06-29");
+    assert.equal(result.top25.change, 1);
+    assert.equal(result.top1pct.change, 2);
+    assert.equal(result.top5pct.change, 2);
+    assert.equal(result.top25.prevRatio, 11);
+  });
+
+  it("skips same-day record when computing change", () => {
+    const current = {
+      top25: { ratio: 12 },
+      top1pct: { ratio: 18 },
+      top5pct: { ratio: 35 }
+    };
+    const history = [
+      { date: "2026-06-27", dimensions: { top25: { ratio: 10 }, top1pct: { ratio: 15 }, top5pct: { ratio: 30 } } },
+      { date: "2026-06-28", dimensions: { top25: { ratio: 11 }, top1pct: { ratio: 16 }, top5pct: { ratio: 33 } } }
+    ];
+    const result = concentration.attachChanges(current, history, "2026-06-28");
+    assert.equal(result.top25.change, 2);
+    assert.equal(result.top25.prevRatio, 10);
+  });
+
+  it("returns null change when no previous history exists", () => {
+    const current = {
+      top25: { ratio: 12 },
+      top1pct: { ratio: 18 },
+      top5pct: { ratio: 35 }
+    };
+    const result = concentration.attachChanges(current, [], "2026-06-28");
+    assert.equal(result.top25.change, null);
+    assert.equal(result.top25.prevRatio, null);
+  });
+
   it("generates possibilities from high concentration", () => {
     const dims = {
       top25: { ratio: 15, percentile: 80, level: "高位集中" },

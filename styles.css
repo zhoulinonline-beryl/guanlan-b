@@ -1161,6 +1161,152 @@ button.virtual-backtest-chart-button.is-loading::before {
   line-height: 1.5;
 }
 
+.golden-pin-section {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.golden-pin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.golden-pin-card {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+  cursor: pointer;
+  background: linear-gradient(180deg, rgba(242, 184, 75, 0.1), rgba(9, 19, 28, 0.96));
+}
+
+.golden-pin-card:hover {
+  border-color: rgba(242, 184, 75, 0.56);
+  background: #0f202d;
+}
+
+.golden-pin-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.golden-pin-head strong,
+.golden-pin-head small {
+  display: block;
+}
+
+.golden-pin-head strong {
+  font-size: 17px;
+}
+
+.golden-pin-head small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.golden-pin-score {
+  text-align: right;
+}
+
+.golden-pin-score span {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.golden-pin-score b {
+  font-size: 22px;
+}
+
+.golden-pin-score.trigger b {
+  color: #ff4d57;
+}
+
+.golden-pin-score.strong b {
+  color: #f2b84b;
+}
+
+.golden-pin-score.watch b {
+  color: #54a3ff;
+}
+
+.golden-pin-quote,
+.golden-pin-breakdown,
+.golden-pin-levels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.golden-pin-quote span,
+.golden-pin-breakdown div,
+.golden-pin-levels span {
+  min-width: 0;
+  border: 1px solid rgba(242, 184, 75, 0.16);
+  border-radius: 8px;
+  background: rgba(6, 13, 20, 0.72);
+  padding: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.golden-pin-breakdown div {
+  text-align: center;
+}
+
+.golden-pin-breakdown strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.golden-pin-levels span {
+  color: #d7e5ef;
+}
+
+.golden-pin-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.golden-pin-metrics span {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(132, 148, 160, 0.12);
+  color: #b0c0cc;
+  font-size: 11px;
+}
+
+.golden-pin-card p {
+  margin: 0;
+  color: #c4d2dc;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.golden-pin-date {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.golden-pin-date input[type="date"] {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper-2);
+  color: var(--ink);
+  font-size: 14px;
+}
+
 .table th:first-child,
 .table td:first-child,
 .table th:nth-child(2),
@@ -4771,7 +4917,11 @@ canvas {
   .recommend-action,
   .tracking-advice-levels,
   .quote-strip,
-  .index-days {
+  .index-days,
+  .golden-pin-grid,
+  .golden-pin-quote,
+  .golden-pin-breakdown,
+  .golden-pin-levels {
     grid-template-columns: 1fr;
   }
 

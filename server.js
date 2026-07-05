@@ -8,7 +8,8 @@ const {
   PORT,
   HOST,
   RECOMMEND_REFRESH_MS,
-  ETF_STRATEGY_REFRESH_MS
+  ETF_STRATEGY_REFRESH_MS,
+  GOLDEN_PIN_REFRESH_MS
 } = require("./src/server/config");
 const {
   normalizeAiApiUrl,
@@ -63,6 +64,7 @@ const { marketOf } = require("./src/server/market/symbols");
 const { trendScore, technicalOpportunityScore } = require("./src/server/market/indicators");
 const { createMarketProviders } = require("./src/server/market/providers");
 const { createMarketService } = require("./src/server/market/marketService");
+const { createMarketDataCache } = require("./src/server/market/marketDataCache");
 const {
   aiConfig,
   aiFallbackUrls,
@@ -88,7 +90,10 @@ const { createEtfListService } = require("./src/server/etf/etfListService");
 const { createEtfSectorMapper } = require("./src/server/etf/etfSectorMapper");
 const { createEtfStrategyService } = require("./src/server/etf/etfStrategyService");
 const { readEtfStrategyStore, writeEtfStrategyStore } = require("./src/server/etf/etfStrategyStore");
+const { readGoldenPinStore, writeGoldenPinStore } = require("./src/server/storage/goldenPinStore");
 const { createEtfProductService } = require("./src/server/etf/etfProductService");
+const { createGoldenPinService } = require("./src/server/goldenPin/goldenPinService");
+const { startGoldenPinRefreshJob } = require("./src/server/jobs/goldenPinRefreshJob");
 
 const execFileAsync = promisify(execFile);
 const staticTypes = {
@@ -235,6 +240,8 @@ const {
   getQuotesBySource
 } = createMarketProviders({ fetchJson, fetchGbkText, eastmoneyUrl, parseKlines });
 
+const marketDataCache = createMarketDataCache({ isAshareTradingAutoRefreshTime });
+
 const marketService = createMarketService({
   fetchJson,
   fetchGbkText,
@@ -243,7 +250,8 @@ const marketService = createMarketService({
   getSinaKlines,
   getTencentKlines,
   getTencentQuotes,
-  getQuotesBySource
+  getQuotesBySource,
+  marketDataCache
 });
 
 const {
@@ -1557,6 +1565,39 @@ const {
   getSavedStockStrategy: savedStockStrategyForCode
 });
 
+const goldenPinService = createGoldenPinService({ getAllAshares, getStockKline });
+
+async function refreshGoldenPins({ force = false, date = "" } = {}) {
+  const cache = await goldenPinService.refreshGoldenPins({ force, date });
+  if (cache.status === "ready" || (cache.status === "error" && cache.data.length)) {
+    writeGoldenPinStore({
+      status: cache.status,
+      refreshedAt: cache.refreshedAt,
+      nextRefreshAt: cache.nextRefreshAt,
+      date: cache.date,
+      data: cache.data,
+      scannedCount: cache.scannedCount,
+      qualifiedCount: cache.qualifiedCount,
+      error: cache.error
+    });
+  }
+  return cache;
+}
+
+function goldenPinSnapshot() {
+  const store = readGoldenPinStore();
+  return {
+    status: store.status || "idle",
+    data: store.data || [],
+    refreshedAt: store.refreshedAt || "",
+    nextRefreshAt: store.nextRefreshAt || "",
+    date: store.date || "",
+    scannedCount: store.scannedCount || 0,
+    qualifiedCount: store.qualifiedCount || 0,
+    error: store.error || ""
+  };
+}
+
 const ensureStartupMarketSnapshot = createStartupMarketSnapshotJob({
   readMarketSnapshot,
   writeMarketSnapshot,
@@ -1621,6 +1662,8 @@ const handleApi = createApiRouter({
   writeAppSettings,
   clearRuntimeCache,
   loadPersistentCache,
+  clearMarketCache: marketService.clearMarketCache,
+  marketDataCache,
   advisorChat,
   makeRequestId,
   redactLogText,
@@ -1670,6 +1713,8 @@ const handleApi = createApiRouter({
   saveVirtualStockStrategy: virtualTradingService.saveStockStrategy,
   refreshEtfStrategy,
   readEtfStrategyStore,
+  refreshGoldenPins,
+  goldenPinSnapshot,
   getEtfProductInfo: etfProductService.getEtfProductInfo,
   getConcentration: concentrationService.getConcentration,
   getConcentrationHistory: concentrationService.getHistory,
@@ -1679,7 +1724,7 @@ const handleApi = createApiRouter({
 
 const SPA_ROUTES = new Set([
   "/home", "/recommend", "/indicator", "/etf", "/portfolio",
-  "/tracking", "/virtual", "/discussion", "/settings"
+  "/tracking", "/virtual", "/discussion", "/settings", "/golden-pin"
 ]);
 
 function handleStatic(req, res) {
@@ -1732,4 +1777,15 @@ http.createServer((req, res) => {
     archiveToday: concentrationService.archiveToday,
     isAshareTradingAutoRefreshTime
   });
+  startGoldenPinRefreshJob({
+    isAshareTradingAutoRefreshTime,
+    refreshGoldenPins,
+    refreshMs: GOLDEN_PIN_REFRESH_MS
+  });
+
+  // 后台预热重缓存接口，避免用户首次访问时等待全量计算
+  setTimeout(() => {
+    concentrationService.getConcentration({ force: false }).catch(() => {});
+    refreshGoldenPins({ force: false }).catch(() => {});
+  }, 2000);
 });

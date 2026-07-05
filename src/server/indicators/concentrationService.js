@@ -3,6 +3,7 @@ const {
   calculateConcentration,
   buildIndustryDistribution,
   attachPercentiles,
+  attachChanges,
   buildTrendSummary,
   buildPossibilities
 } = require("./concentration");
@@ -35,18 +36,7 @@ function createConcentrationService({ getAllAshares, getIndices, hasAiKey, kimiJ
     return isMemoryCacheExpired();
   }
 
-  async function computeCurrent({ force = false } = {}) {
-    if (!force && runtimeCache.current && !runtimeCacheExpired()) {
-      return { ...runtimeCache.current, isRealtime: runtimeCache.isRealtime };
-    }
-    if (runtimeCache.loading) {
-      while (runtimeCache.loading) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      if (runtimeCache.current) return { ...runtimeCache.current, isRealtime: runtimeCache.isRealtime };
-    }
-
-    runtimeCache.loading = true;
+  async function performCompute() {
     const startedAt = Date.now();
     let stocks = [];
     let source = "unknown";
@@ -62,14 +52,18 @@ function createConcentrationService({ getAllAshares, getIndices, hasAiKey, kimiJ
 
     const calculated = calculateConcentration(stocks);
     const history = listRecords(120);
-    const dimensions = attachPercentiles(calculated, history);
+    const today = shanghaiDate();
+    const dimensions = attachChanges(
+      attachPercentiles(calculated, history),
+      history,
+      today
+    );
     const industryDistribution = buildIndustryDistribution(stocks, calculated.topStocks);
 
     const indices = await getIndices().catch(() => []);
     const trendSummary = buildTrendSummary(dimensions, history);
     const possibilities = buildPossibilities(dimensions, history, indices);
 
-    const today = shanghaiDate();
     const record = {
       date: today,
       scope: "沪深A股",
@@ -114,6 +108,43 @@ function createConcentrationService({ getAllAshares, getIndices, hasAiKey, kimiJ
 
     console.log(`[concentration] 计算完成: 样本 ${calculated.sampleCount}, 耗时 ${Date.now() - startedAt}ms, 来源 ${source}`);
     return result;
+  }
+
+  function backgroundRefresh() {
+    if (runtimeCache.loading) return;
+    runtimeCache.loading = true;
+    performCompute()
+      .catch((error) => {
+        console.error("[concentration-background-refresh-failed]", error.message);
+      })
+      .finally(() => {
+        runtimeCache.loading = false;
+      });
+  }
+
+  async function computeCurrent({ force = false } = {}) {
+    if (!force && runtimeCache.current && !runtimeCacheExpired()) {
+      return { ...runtimeCache.current, isRealtime: runtimeCache.isRealtime };
+    }
+    if (runtimeCache.loading) {
+      while (runtimeCache.loading) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (runtimeCache.current) return { ...runtimeCache.current, isRealtime: runtimeCache.isRealtime };
+    }
+
+    // 缓存过期但非强制刷新：先返回旧缓存，后台静默刷新，避免请求超时。
+    if (!force && runtimeCache.current) {
+      backgroundRefresh();
+      return { ...runtimeCache.current, isRealtime: false };
+    }
+
+    runtimeCache.loading = true;
+    try {
+      return await performCompute();
+    } finally {
+      runtimeCache.loading = false;
+    }
   }
 
   function computeChecksum(stocks = []) {

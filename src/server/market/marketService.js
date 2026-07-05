@@ -95,7 +95,8 @@ function createMarketService({
   getSinaKlines,
   getTencentKlines,
   getTencentQuotes,
-  getQuotesBySource
+  getQuotesBySource,
+  marketDataCache
 }) {
   function symbolFromStock(stock) {
     return symbolOf(stock.code, stock.market ?? marketOf(stock.code));
@@ -234,7 +235,7 @@ function createMarketService({
     });
   }
 
-  async function getQuote(code, market = marketOf(code)) {
+  async function _getQuote(code, market = marketOf(code)) {
     const symbol = symbolOf(code, market);
     const { quotes, source } = await getQuotesBySource([symbol]);
     const quote = quotes.get(symbol);
@@ -257,7 +258,12 @@ function createMarketService({
     };
   }
 
-  async function getIndices() {
+  async function getQuote(code, market = marketOf(code), options = {}) {
+    if (!marketDataCache) return _getQuote(code, market);
+    return marketDataCache.getQuote(code, market, () => _getQuote(code, market), options);
+  }
+
+  async function _getIndices() {
     const { quotes, source } = await getQuotesBySource(majorIndices.map(([symbol]) => symbol));
     return majorIndices.map(([symbol, fallbackName]) => {
       const quote = quotes.get(symbol) || {};
@@ -279,7 +285,12 @@ function createMarketService({
     }).filter((item) => Number.isFinite(item.price));
   }
 
-  async function getIndexKline(symbol) {
+  async function getIndices(options = {}) {
+    if (!marketDataCache) return _getIndices();
+    return marketDataCache.getIndices(() => _getIndices(), options);
+  }
+
+  async function _getIndexKline(symbol) {
     const secid = indexSecids.get(symbol);
     if (!secid) throw new Error("暂不支持该指数");
     if (marketDataSource() === "tencent") {
@@ -297,6 +308,11 @@ function createMarketService({
       const klines = await getTencentKlines(symbol, 14);
       return { symbol, secid, klines, source: "tencent" };
     }
+  }
+
+  async function getIndexKline(symbol, options = {}) {
+    if (!marketDataCache) return _getIndexKline(symbol);
+    return marketDataCache.getIndexKline(symbol, () => _getIndexKline(symbol), options);
   }
 
   function sectorQuality(sector) {
@@ -318,7 +334,7 @@ function createMarketService({
     return [...byName.values()];
   }
 
-  async function getSectors(window = 5) {
+  async function _getSectors(window = 5) {
     const source = marketDataSource();
     if (source === "tencent") {
       try {
@@ -357,6 +373,11 @@ function createMarketService({
     } catch {
       return getEastmoneyMobileFundSectors(window).catch(() => getSohuFallbackSectors(window).catch(() => getFallbackSectors(window)));
     }
+  }
+
+  async function getSectors(window = 5, options = {}) {
+    if (!marketDataCache) return _getSectors(window);
+    return marketDataCache.getSectors(window, () => _getSectors(window), options);
   }
 
   async function getEastmoneyMobileFundSectors(window = 5) {
@@ -483,7 +504,7 @@ function createMarketService({
     });
   }
 
-  async function getStocks(board, window = 5) {
+  async function _getStocks(board, window = 5) {
     const source = marketDataSource();
     if (source === "tencent" || source === "sina") {
       try {
@@ -543,6 +564,11 @@ function createMarketService({
     }
   }
 
+  async function getStocks(board, window = 5, options = {}) {
+    if (!marketDataCache) return _getStocks(board, window);
+    return marketDataCache.getStocks(board, window, () => _getStocks(board, window), options);
+  }
+
   async function getMobileBoardFundStocks(board, window = 5) {
     const url = eastmoneyUrl("emdatah5.eastmoney.com", "/dc/ZJLX/getZDYLBData", {
       fields: "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f13,f14,f15,f16,f17,f18,f20,f21,f23,f62,f184,f267,f268,f164,f165,f174,f175",
@@ -592,7 +618,7 @@ function createMarketService({
     return (await withTencentStockQuotes(stocks, window)).sort((a, b) => Number(b.mainFlow || 0) - Number(a.mainFlow || 0));
   }
 
-  async function getStockKline(code, market, options = {}) {
+  async function _getStockKline(code, market, options = {}) {
     const resolvedMarket = market ?? marketOf(code);
     const symbol = symbolOf(code, resolvedMarket);
     const preferred = marketDataSource();
@@ -636,6 +662,11 @@ function createMarketService({
       const klines = await getSinaKlines(symbol, count);
       return { code, market: resolvedMarket, secid, klines, source: "sina" };
     }
+  }
+
+  async function getStockKline(code, market, options = {}) {
+    if (!marketDataCache) return _getStockKline(code, market, options);
+    return marketDataCache.getStockKline(code, market, options, () => _getStockKline(code, market, options));
   }
 
   async function getAllAsharesFromEastmoney() {
@@ -686,20 +717,71 @@ function createMarketService({
     return all;
   }
 
-  async function getAllAshares() {
+  async function _getAllAshares() {
     const preferred = marketDataSource();
-    if (preferred === "tencent") {
+    const errors = [];
+    if (preferred === "eastmoney") {
       try {
-        return await getAllAsharesFromTencent();
-      } catch {
-        // fallback
+        return await getAllAsharesFromEastmoney();
+      } catch (error) {
+        errors.push(`eastmoney: ${error.message}`);
       }
     }
     try {
-      return await getAllAsharesFromEastmoney();
-    } catch {
-      return getAllAsharesFromTencent();
+      return await getAllAsharesFromSina();
+    } catch (error) {
+      errors.push(`sina: ${error.message}`);
     }
+    if (preferred !== "eastmoney") {
+      try {
+        return await getAllAsharesFromEastmoney();
+      } catch (error) {
+        errors.push(`eastmoney: ${error.message}`);
+      }
+    }
+    throw new Error(`无法获取全A股数据: ${errors.join("; ")}`);
+  }
+
+  async function getAllAshares(options = {}) {
+    if (!marketDataCache) return _getAllAshares();
+    return marketDataCache.getAllAshares(() => _getAllAshares(), options);
+  }
+
+  async function getAllAsharesFromSina() {
+    const all = [];
+    const pageSize = 100;
+    let page = 1;
+    const maxPages = 100;
+    while (page <= maxPages) {
+      const url = `https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData?node=hs_a&num=${pageSize}&page=${page}`;
+      const rows = await fetchJson(url);
+      if (!Array.isArray(rows) || rows.length === 0) break;
+      for (const row of rows) {
+        const code = String(row.code || "").trim();
+        const name = String(row.name || "").trim();
+        const symbol = String(row.symbol || "").trim();
+        const amount = Number(row.amount);
+        const price = Number(row.trade);
+        if (!code || !name || !Number.isFinite(amount) || amount <= 0) continue;
+        all.push({
+          name,
+          code,
+          market: symbol.startsWith("sh") ? 1 : 0,
+          price,
+          pct: Number(row.changepercent),
+          change: Number(row.pricechange),
+          volume: Number(row.volume),
+          amount,
+          turnover: Number(row.turnoverratio),
+          industry: "",
+          source: "sina"
+        });
+      }
+      if (rows.length < pageSize) break;
+      page += 1;
+    }
+    if (!all.length) throw new Error("新浪全A股源返回为空");
+    return all;
   }
 
   async function getAllAsharesFromTencent() {
@@ -795,6 +877,10 @@ function createMarketService({
     return stocks.sort((a, b) => b.score - a.score).slice(0, 10);
   }
 
+  function clearMarketCache() {
+    if (marketDataCache) marketDataCache.clear();
+  }
+
   return {
     normalizeSectorName,
     stockAdviceForServer,
@@ -813,9 +899,11 @@ function createMarketService({
     getStockProfile,
     getAllAshares,
     getAllAsharesFromEastmoney,
+    getAllAsharesFromSina,
     getAllAsharesFromTencent,
     getFallbackSectors,
-    getFallbackStocks
+    getFallbackStocks,
+    clearMarketCache
   };
 }
 

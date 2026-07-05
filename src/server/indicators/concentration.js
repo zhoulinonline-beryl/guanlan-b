@@ -145,6 +145,26 @@ function attachPercentiles(current, history = []) {
   return result;
 }
 
+function attachChanges(current, history = [], today = "") {
+  const dimensions = ["top25", "top1pct", "top5pct"];
+  const todayStr = String(today || "");
+  const previous = todayStr
+    ? history.filter((item) => item.date && String(item.date) < todayStr)
+    : history;
+  const result = {};
+  for (const key of dimensions) {
+    const prevRatio = previous.at(-1)?.dimensions?.[key]?.ratio;
+    const ratio = current[key]?.ratio ?? 0;
+    const hasPrev = Number.isFinite(prevRatio);
+    result[key] = {
+      ...current[key],
+      change: hasPrev ? Number((ratio - prevRatio).toFixed(6)) : null,
+      prevRatio: hasPrev ? prevRatio : null
+    };
+  }
+  return result;
+}
+
 function trendDirection(values = []) {
   if (values.length < 2) return "平稳";
   const latest = values.at(-1);
@@ -247,6 +267,7 @@ module.exports = {
   percentileRank,
   levelFromPercentile,
   attachPercentiles,
+  attachChanges,
   trendDirection,
   movingAverage,
   buildTrendSummary,
